@@ -1,0 +1,17 @@
+---
+# DEV environment configuration
+# Applied when deploying with: -l dev
+
+# ── Network ──────────────────────────────────────────────────
+dev_db_host: 10.10.100.200        # VM-210 (colossus-dev-db1)
+# dev_app_host: 10.10.100.220     # VM-220 (colossus-dev-app1) — uncomment when created
+
+# ── Colossus-Legal: Backend ──────────────────────────────────
+colossus_legal_neo4j_uri: "bolt://{{ dev_db_host }}:7687"
+colossus_legal_neo4j_user: "neo4j"
+colossus_legal_rust_log: "debug"
+colossus_legal_document_path: "/data/documents"
+
+# ── Colossus-Legal: Frontend ─────────────────────────────────
+# This is the runtime-injected API URL (not baked into the image)
+colossus_legal_api_url: "http://{{ ansible_host }}:3403"

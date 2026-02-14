@@ -1,0 +1,10 @@
+---
+# VM-120: PROD App (pve-1)
+# Usage: ansible-playbook playbooks/create-vm.yml -l pve-1 -e @vars/vm-120-prod-app.yml
+
+vm_id: 120
+vm_name: colossus-prod-app1
+vm_ignition: colossus-prod-app1.ign
+vm_cores: 2
+vm_memory: 4096
+vm_disk_grow: "+40G"

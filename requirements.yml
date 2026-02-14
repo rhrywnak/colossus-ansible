@@ -1,0 +1,10 @@
+---
+# ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.general
+    version: ">=9.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0"
+  # Uncomment when ready for Proxmox VM management via Ansible
+  # - name: community.proxmox
+  #   version: ">=1.0.0"

@@ -1,0 +1,15 @@
+{
+  "app": "{{ app }}",
+  "version": "{{ manifest_version }}",
+  "previous_version": "{{ manifest_previous_version }}",
+  "deployed_at": "{{ manifest_timestamp }}",
+  "deployed_by": "ansible",
+  "environment": "{{ manifest_environment }}",
+  "target_host": "{{ inventory_hostname }}",
+  "target_ip": "{{ ansible_host }}",
+  "images": {
+{% for container in app_def.containers %}
+    "{{ container.name }}": "{{ container_registry }}/{{ container.image_name }}:{{ manifest_version }}"{{ "," if not loop.last else "" }}
+{% endfor %}
+  }
+}

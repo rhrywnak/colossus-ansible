@@ -1,0 +1,18 @@
+# Ansible Vault secrets
+secrets/
+*.retry
+
+# Local config that references workstation paths
+# (vault_password_file points to ~/.vault_pass)
+
+# Editor/OS artifacts
+*.swp
+*.swo
+*~
+.DS_Store
+
+# SSH keys (should never be here, but just in case)
+*.pem
+id_*
+ansible.cfg-SAVE
+group_vars/

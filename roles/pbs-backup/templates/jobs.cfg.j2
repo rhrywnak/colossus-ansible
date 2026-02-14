@@ -1,0 +1,13 @@
+{% for job in pbs_backup_jobs %}
+vzdump: {{ job.name }}
+	schedule {{ job.schedule | default(pbs_schedule) }}
+	compress {{ job.compress | default(pbs_compress) }}
+	enabled {{ job.enabled | default(pbs_enabled) }}
+	mode {{ job.mode | default(pbs_mode) }}
+	notes-template {{ job.notes }}
+	storage {{ job.storage | default(pbs_storage) }}
+	vmid {{ job.vmid }}
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}

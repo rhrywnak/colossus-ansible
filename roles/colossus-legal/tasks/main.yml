@@ -1,0 +1,61 @@
+---
+# colossus-legal/tasks/main.yml
+#
+# Writes Quadlet container definitions, environment files,
+# and frontend runtime configuration.
+#
+# Called by deploy-app role during deployment.
+# Variable 'deploy_version' is set by the caller.
+
+# ── Determine environment-specific Neo4j password ────────────
+- name: "Set Neo4j password for environment"
+  ansible.builtin.set_fact:
+    _neo4j_password: >-
+      {{ vault_colossus_legal_neo4j_password_prod
+         if 'prod' in group_names
+         else vault_colossus_legal_neo4j_password_dev }}
+  no_log: true
+
+# ── Ensure document storage directory exists ─────────────────
+- name: "Create document storage directory"
+  ansible.builtin.file:
+    path: "{{ colossus_legal_documents_host_path }}"
+    state: directory
+    mode: "0755"
+
+# ── Write environment file (backend secrets) ─────────────────
+- name: "Write backend environment file"
+  ansible.builtin.template:
+    src: colossus-legal-backend.env.j2
+    dest: "{{ app_env_dir }}/colossus-legal-backend.env"
+    mode: "0600"
+  no_log: true
+
+# ── Write frontend runtime config ────────────────────────────
+# This file is mounted into the nginx container and served to the browser.
+# The React app reads it at startup instead of using baked-in env vars.
+- name: "Write frontend runtime config"
+  ansible.builtin.template:
+    src: config.js.j2
+    dest: "{{ app_config_dir }}/colossus-legal/config.js"
+    mode: "0644"
+
+# ── Write nginx configuration ────────────────────────────────
+- name: "Write nginx configuration"
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: "{{ app_config_dir }}/colossus-legal/nginx.conf"
+    mode: "0644"
+
+# ── Write Quadlet container definitions ──────────────────────
+- name: "Write backend Quadlet file"
+  ansible.builtin.template:
+    src: colossus-backend.container.j2
+    dest: "{{ quadlet_dir }}/colossus-backend.container"
+    mode: "0644"
+
+- name: "Write frontend Quadlet file"
+  ansible.builtin.template:
+    src: colossus-frontend.container.j2
+    dest: "{{ quadlet_dir }}/colossus-frontend.container"
+    mode: "0644"

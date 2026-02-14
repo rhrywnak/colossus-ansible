@@ -1,0 +1,10 @@
+---
+# CT-311: Pi-hole (pve-3)
+# Usage: ansible-playbook playbooks/create-lxc.yml -l pve-3 -e @vars/ct-311-pihole.yml
+
+ct_id: 311
+ct_hostname: pihole
+ct_ip: "10.10.100.53/24"
+ct_gateway: "10.10.100.1"
+ct_memory: 512
+ct_disk_size: 4

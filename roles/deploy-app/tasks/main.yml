@@ -1,0 +1,26 @@
+---
+# deploy-app/tasks/main.yml
+#
+# Generic application deployment orchestrator.
+# Routes to deploy.yml or rollback.yml based on 'action' variable.
+#
+# Required variables:
+#   app:     Application name (e.g., "colossus-legal")
+#   version: Image tag to deploy (e.g., "v1.0.0") — required for deploy, auto-detected for rollback
+#   action:  "deploy" (default) or "rollback"
+
+- name: "Validate required variables"
+  ansible.builtin.assert:
+    that:
+      - app is defined and app | length > 0
+      - app in apps
+    fail_msg: >
+      'app' must be defined and must exist in the 'apps' dictionary (group_vars/all.yml).
+      Available apps: {{ apps.keys() | list }}
+
+- name: "Set app definition"
+  ansible.builtin.set_fact:
+    app_def: "{{ apps[app] }}"
+
+- name: "Route to action: {{ action | default('deploy') }}"
+  ansible.builtin.include_tasks: "{{ action | default('deploy') }}.yml"

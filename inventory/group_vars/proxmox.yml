@@ -1,0 +1,41 @@
+---
+# Proxmox cluster — shared configuration
+#
+# PBS backup jobs (/etc/pve/jobs.cfg is cluster-wide)
+# The pbs-backup role templates this file on any one Proxmox node.
+
+pbs_backup_jobs:
+  # ── PROD ───────────────────────────────────────────────────
+  - name: backup-prod-db
+    vmid: 110
+    notes: "PROD DB scheduled backup"
+
+  - name: backup-prod-app
+    vmid: 120
+    notes: "PROD App scheduled backup"
+
+  # ── DEV ────────────────────────────────────────────────────
+  - name: backup-dev-db-frozen
+    vmid: 200
+    notes: "DEV DB frozen ref scheduled backup"
+
+  - name: backup-dev-db
+    vmid: 210
+    notes: "DEV DB scheduled backup"
+
+  - name: backup-dev-app
+    vmid: 220
+    notes: "DEV App scheduled backup"
+
+  # ── Infrastructure ─────────────────────────────────────────
+  - name: backup-pihole
+    vmid: 311
+    notes: "Pi-hole scheduled backup"
+
+  - name: backup-cloudflared
+    vmid: 312
+    notes: "Cloudflared scheduled backup"
+
+  - name: backup-traefik
+    vmid: 313
+    notes: "Traefik scheduled backup"

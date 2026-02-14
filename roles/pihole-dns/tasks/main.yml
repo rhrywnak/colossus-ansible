@@ -1,0 +1,111 @@
+---
+# pihole-dns/tasks/main.yml
+#
+# Manages Pi-hole v6 DNS records via the REST API.
+# Declarative: records not in pihole_dns_records will be removed.
+#
+# Required variables:
+#   pihole_dns_records: list of strings in HOSTS format (see defaults/main.yml)
+
+- name: "Validate pihole_dns_records is defined and non-empty"
+  ansible.builtin.assert:
+    that:
+      - pihole_dns_records is defined
+      - pihole_dns_records | length > 0
+    fail_msg: >
+      pihole_dns_records must contain at least one record.
+      Define records in inventory/host_vars/pihole.yml
+    quiet: true
+
+# ── Fetch current state from Pi-hole API ─────────────────────
+# check_mode: false — this is a read-only GET, safe to run always
+- name: "Fetch current DNS records from Pi-hole API"
+  ansible.builtin.uri:
+    url: "{{ pihole_api_base }}"
+    method: GET
+    return_content: true
+  register: pihole_current
+  check_mode: false
+  changed_when: false
+
+# ── Compare desired vs current ───────────────────────────────
+- name: "Calculate DNS record changes"
+  ansible.builtin.set_fact:
+    records_to_add: "{{ pihole_dns_records | difference(pihole_current.json.config.dns.hosts) }}"
+    records_to_remove: "{{ pihole_current.json.config.dns.hosts | difference(pihole_dns_records) }}"
+
+- name: "Show planned changes"
+  ansible.builtin.debug:
+    msg: >-
+      DNS records: {{ pihole_dns_records | length }} desired,
+      {{ pihole_current.json.config.dns.hosts | length }} current.
+      To add: {{ records_to_add | length }}.
+      To remove: {{ records_to_remove | length }}.
+  when: (records_to_add | length > 0) or (records_to_remove | length > 0)
+
+# ── Apply changes (skip in check mode) ──────────────────────
+
+- name: "Add missing DNS records"
+  ansible.builtin.uri:
+    url: "{{ pihole_api_base }}/{{ item | regex_replace(' ', '%20') }}"
+    method: PUT
+    status_code: [200]
+  loop: "{{ records_to_add }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - records_to_add | length > 0
+    - not ansible_check_mode
+
+- name: "Remove extra DNS records"
+  ansible.builtin.uri:
+    url: "{{ pihole_api_base }}/{{ item | regex_replace(' ', '%20') }}"
+    method: DELETE
+    status_code: [200, 204]
+    return_content: false
+  loop: "{{ records_to_remove }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - records_to_remove | length > 0
+    - not ansible_check_mode
+
+# ── Report changes for check mode ───────────────────────────
+# In check mode, the actual API calls are skipped.
+# This task flags the play as "changed" so --check output is accurate.
+- name: "Would add DNS records (check mode)"
+  ansible.builtin.debug:
+    msg: "Would add: {{ item }}"
+  loop: "{{ records_to_add }}"
+  when:
+    - ansible_check_mode
+    - records_to_add | length > 0
+  changed_when: true
+
+- name: "Would remove DNS records (check mode)"
+  ansible.builtin.debug:
+    msg: "Would remove: {{ item }}"
+  loop: "{{ records_to_remove }}"
+  when:
+    - ansible_check_mode
+    - records_to_remove | length > 0
+  changed_when: true
+
+# ── Validation ───────────────────────────────────────────────
+- name: "Verify DNS resolution (sample check)"
+  ansible.builtin.command:
+    cmd: "dig +short {{ pihole_dns_records[0].split()[1] }} @127.0.0.1"
+  register: dig_result
+  changed_when: false
+  failed_when: >
+    pihole_dns_records[0].split()[0] not in dig_result.stdout
+  when: not ansible_check_mode
+
+- name: "Show summary"
+  ansible.builtin.debug:
+    msg: >-
+      Pi-hole DNS {{ 'unchanged — ' if
+        (records_to_add | length == 0 and records_to_remove | length == 0)
+        else 'UPDATED — ' }}{{ pihole_dns_records | length }} records
+      (added {{ records_to_add | length }},
+      removed {{ records_to_remove | length }}).

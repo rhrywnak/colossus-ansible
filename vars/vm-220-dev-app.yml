@@ -1,0 +1,10 @@
+---
+# VM-220: DEV App (pve-2)
+# Usage: ansible-playbook playbooks/create-vm.yml -l pve-2 -e @vars/vm-220-dev-app.yml
+
+vm_id: 220
+vm_name: colossus-dev-app1
+vm_ignition: colossus-dev-app1.ign
+vm_cores: 2
+vm_memory: 4096
+vm_disk_grow: "+40G"

@@ -1,0 +1,165 @@
+---
+# proxmox-vm/tasks/main.yml
+#
+# Creates a Fedora CoreOS VM on a Proxmox host.
+# Idempotent: skips entirely if the VMID already exists.
+#
+# Required variables:
+#   vm_id:        Proxmox VMID (e.g., 110)
+#   vm_name:      VM hostname (e.g., colossus-prod-db1)
+#   vm_ignition:  Ignition filename (e.g., colossus-prod-db1.ign)
+
+# ── Validate required variables ──────────────────────────────
+
+- name: "Validate required VM variables"
+  ansible.builtin.assert:
+    that:
+      - vm_id is defined
+      - vm_name is defined
+      - vm_ignition is defined
+    fail_msg: "Required: vm_id, vm_name, vm_ignition"
+    quiet: true
+
+# ── Check if VM already exists (idempotency) ────────────────
+
+- name: "Check if VM {{ vm_id }} already exists"
+  ansible.builtin.command:
+    cmd: "qm status {{ vm_id }}"
+  register: vm_exists
+  changed_when: false
+  failed_when: false
+
+- name: "VM {{ vm_id }} already exists — skipping creation"
+  ansible.builtin.debug:
+    msg: "VM {{ vm_id }} ({{ vm_name }}) already exists. No changes made."
+  when: vm_exists.rc == 0
+
+# ── All creation tasks are skipped if VM exists ──────────────
+
+- name: "Create VM {{ vm_id }} ({{ vm_name }})"
+  when: vm_exists.rc != 0
+  block:
+
+    # ── Pre-flight checks ────────────────────────────────────
+
+    - name: "Find CoreOS QCOW2 image"
+      ansible.builtin.find:
+        paths: "{{ vm_coreos_images_dir }}"
+        patterns: "fedora-coreos-*-proxmoxve.x86_64.qcow2"
+      register: coreos_images
+
+    - name: "Fail if no CoreOS image found"
+      ansible.builtin.fail:
+        msg: >
+          No CoreOS QCOW2 image found in {{ vm_coreos_images_dir }}.
+          Download one first:
+            podman run --pull=always --rm -v '{{ vm_coreos_images_dir }}:/data' -w /data
+            quay.io/coreos/coreos-installer:release download -s stable -p proxmoxve -f qcow2.xz --decompress
+      when: coreos_images.files | length == 0
+
+    - name: "Set CoreOS image path (latest version)"
+      ansible.builtin.set_fact:
+        vm_coreos_qcow: "{{ coreos_images.files | sort(attribute='path') | last | attr('path') }}"
+
+    - name: "Verify Ignition file exists"
+      ansible.builtin.stat:
+        path: "{{ vm_coreos_snippets_dir }}/{{ vm_ignition }}"
+      register: ign_file
+
+    - name: "Fail if Ignition file missing"
+      ansible.builtin.fail:
+        msg: >
+          Ignition file not found: {{ vm_coreos_snippets_dir }}/{{ vm_ignition }}.
+          Transpile the Butane config and copy it first:
+            scp {{ vm_ignition }} root@{{ inventory_hostname }}:{{ vm_coreos_snippets_dir }}/
+      when: not ign_file.stat.exists
+
+    - name: "Ensure Proxmox coreos storage exists"
+      ansible.builtin.command:
+        cmd: "pvesm status"
+      register: pvesm_list
+      changed_when: false
+
+    - name: "Create coreos storage if missing"
+      ansible.builtin.shell: |
+        mkdir -p {{ vm_coreos_store_path }}/{images,snippets}
+        pvesm add dir {{ vm_coreos_store_id }} --path {{ vm_coreos_store_path }} --content images,snippets
+      when: vm_coreos_store_id not in pvesm_list.stdout
+
+    - name: "Verify virtiofs directory mappings exist"
+      ansible.builtin.command:
+        cmd: "pvesh get /cluster/mapping/dir/{{ item.dirid }}"
+      loop: "{{ vm_virtiofs_shares }}"
+      loop_control:
+        label: "{{ item.dirid }}"
+      changed_when: false
+      when: vm_virtiofs_shares | length > 0
+
+    # ── Create VM ────────────────────────────────────────────
+
+    - name: "Create VM {{ vm_id }}"
+      ansible.builtin.command:
+        cmd: >
+          qm create {{ vm_id }}
+          --name {{ vm_name }}
+          --machine {{ vm_machine }}
+          --cores {{ vm_cores }}
+          --memory {{ vm_memory }}
+          --net0 "virtio,bridge={{ vm_bridge }}"
+          --scsihw {{ vm_scsihw }}
+
+    - name: "Import CoreOS disk"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --scsi0 {{ vm_storage }}:0,import-from={{ vm_coreos_qcow }}"
+
+    - name: "Grow disk by {{ vm_disk_grow }}"
+      ansible.builtin.command:
+        cmd: "qm resize {{ vm_id }} scsi0 {{ vm_disk_grow }}"
+
+    - name: "Attach cloud-init drive"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --ide2 {{ vm_storage }}:cloudinit"
+
+    - name: "Set boot order"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --boot order=scsi0"
+
+    - name: "Enable serial console"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --serial0 socket --vga serial0"
+
+    - name: "Configure Ignition via cloud-init vendor snippet"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --cicustom vendor={{ vm_coreos_store_id }}:snippets/{{ vm_ignition }}"
+
+    - name: "Disable cloud-init auto-upgrade"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --ciupgrade 0"
+
+    # ── Attach virtiofs shares (if any) ──────────────────────
+
+    - name: "Attach virtiofs shares"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} -virtiofs{{ idx }} dirid={{ item.dirid }},cache={{ item.cache | default('always') }}"
+      loop: "{{ vm_virtiofs_shares }}"
+      loop_control:
+        index_var: idx
+        label: "virtiofs{{ idx }}={{ item.dirid }}"
+      when: vm_virtiofs_shares | length > 0
+
+    # ── Optionally start ─────────────────────────────────────
+
+    - name: "Start VM {{ vm_id }}"
+      ansible.builtin.command:
+        cmd: "qm start {{ vm_id }}"
+      when: vm_auto_start
+
+    # ── Summary ──────────────────────────────────────────────
+
+    - name: "VM creation complete"
+      ansible.builtin.debug:
+        msg: >-
+          VM {{ vm_id }} ({{ vm_name }}) created.
+          Cores: {{ vm_cores }}, Memory: {{ vm_memory }}MB,
+          virtiofs: {{ vm_virtiofs_shares | length }} shares.
+          {% if not vm_auto_start %}Start with: qm start {{ vm_id }}{% endif %}

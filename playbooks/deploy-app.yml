@@ -1,0 +1,45 @@
+---
+# playbooks/deploy-app.yml
+#
+# Deploy an application to target environment.
+#
+# Usage:
+#   # Deploy to DEV
+#   ansible-playbook playbooks/deploy-app.yml \
+#     -e app=colossus-legal \
+#     -e version=v1.0.0 \
+#     -l dev \
+#     --ask-vault-pass
+#
+#   # Deploy to PROD
+#   ansible-playbook playbooks/deploy-app.yml \
+#     -e app=colossus-legal \
+#     -e version=v1.0.0 \
+#     -l prod \
+#     --ask-vault-pass
+
+- name: "Deploy {{ app }} {{ version }}"
+  hosts: app_vms
+  gather_facts: true
+
+  pre_tasks:
+    - name: "Validate deployment parameters"
+      ansible.builtin.assert:
+        that:
+          - app is defined
+          - version is defined
+        fail_msg: "Required: -e app=<name> -e version=<tag>"
+      run_once: true
+
+    - name: "Confirm PROD deployment"
+      ansible.builtin.pause:
+        prompt: >
+          ⚠️  You are deploying {{ app }} {{ version }} to PRODUCTION.
+          Press Enter to continue or Ctrl+C to abort.
+      when: "'prod' in group_names"
+      run_once: true
+
+  roles:
+    - role: deploy-app
+      vars:
+        action: deploy

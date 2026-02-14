@@ -1,0 +1,10 @@
+---
+# CT-313: Traefik (pve-3)
+# Usage: ansible-playbook playbooks/create-lxc.yml -l pve-3 -e @vars/ct-313-traefik.yml
+
+ct_id: 313
+ct_hostname: traefik
+ct_ip: "10.10.100.55/24"
+ct_gateway: "10.10.100.1"
+ct_memory: 256
+ct_disk_size: 4

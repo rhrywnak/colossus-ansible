@@ -1,0 +1,16 @@
+---
+# manage-pihole.yml — Manage Pi-hole Local DNS Records
+#
+# Syncs Pi-hole DNS records with the definitions in
+# inventory/host_vars/pihole.yml via the Pi-hole v6 REST API.
+# Declarative: records not in the variable file are removed.
+#
+# Usage:
+#   ansible-playbook playbooks/manage-pihole.yml --check --diff   # dry-run
+#   ansible-playbook playbooks/manage-pihole.yml                   # execute
+
+- name: "Manage Pi-hole DNS records"
+  hosts: pihole
+  become: true
+  roles:
+    - pihole-dns

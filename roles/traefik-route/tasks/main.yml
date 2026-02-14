@@ -1,0 +1,67 @@
+---
+# traefik-route/tasks/main.yml
+#
+# Manages /etc/traefik/dynamic/services.yml on CT-313.
+# Traefik watches this directory and hot-reloads on change.
+#
+# Required variables:
+#   traefik_routes: list of route definitions (see defaults/main.yml)
+
+- name: "Validate traefik_routes is defined and non-empty"
+  ansible.builtin.assert:
+    that:
+      - traefik_routes is defined
+      - traefik_routes | length > 0
+    fail_msg: >
+      traefik_routes must contain at least one route.
+      Define routes in inventory/host_vars/traefik.yml
+    quiet: true
+
+- name: "Ensure dynamic config directory exists"
+  ansible.builtin.file:
+    path: "{{ traefik_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "Deploy Traefik dynamic services configuration"
+  ansible.builtin.template:
+    src: services.yml.j2
+    dest: "{{ traefik_services_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  register: traefik_config_result
+
+- name: "Wait for Traefik hot-reload (2s)"
+  ansible.builtin.pause:
+    seconds: 2
+  when: traefik_config_result is changed
+
+# ── Validation ───────────────────────────────────────────────
+
+- name: "Verify Traefik process is running"
+  ansible.builtin.command:
+    cmd: pgrep -x traefik
+  register: traefik_pid
+  changed_when: false
+  failed_when: traefik_pid.rc != 0
+
+- name: "Verify Traefik is listening on HTTPS (443)"
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 443
+    timeout: 10
+    state: started
+  changed_when: false
+
+- name: "Show change summary"
+  ansible.builtin.debug:
+    msg: >-
+      Traefik config {{ 'UPDATED' if traefik_config_result is changed else 'unchanged' }}.
+      {{ traefik_routes | length }} routes
+      ({{ traefik_routes | selectattr('external', 'defined') | selectattr('external') | list | length }} external).
+      {% if traefik_config_result.backup_file is defined %}Backup: {{ traefik_config_result.backup_file }}{% endif %}
+  when: traefik_config_result is changed

@@ -1,0 +1,12 @@
+// Managed by Ansible — do not edit manually
+// Runtime configuration for Colossus-Legal frontend
+// Loaded by the React app at startup (via <script> tag in index.html)
+//
+// This replaces the VITE_API_URL build-time variable with a runtime value,
+// allowing a single container image to work in any environment.
+
+window.__COLOSSUS_CONFIG__ = {
+  apiUrl: "{{ colossus_legal_api_url }}",
+  environment: "{{ group_names | intersect(['dev', 'prod']) | first | default('unknown') }}",
+  version: "{{ deploy_version }}"
+};

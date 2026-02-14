@@ -1,0 +1,117 @@
+---
+# proxmox-lxc/tasks/main.yml
+#
+# Creates an LXC container on a Proxmox host.
+# Idempotent: skips entirely if the CTID already exists.
+#
+# Required variables:
+#   ct_id:       Proxmox CTID (e.g., 311)
+#   ct_hostname: Container hostname (e.g., pihole)
+#   ct_ip:       IP with CIDR (e.g., "10.10.100.53/24")
+#   ct_gateway:  Gateway IP (e.g., "10.10.100.1")
+
+# ── Validate required variables ──────────────────────────────
+
+- name: "Validate required LXC variables"
+  ansible.builtin.assert:
+    that:
+      - ct_id is defined
+      - ct_hostname is defined
+      - ct_ip is defined
+      - ct_gateway is defined
+    fail_msg: "Required: ct_id, ct_hostname, ct_ip, ct_gateway"
+    quiet: true
+
+# ── Check if container already exists (idempotency) ─────────
+
+- name: "Check if CT {{ ct_id }} already exists"
+  ansible.builtin.command:
+    cmd: "pct status {{ ct_id }}"
+  register: ct_exists
+  changed_when: false
+  failed_when: false
+
+- name: "CT {{ ct_id }} already exists — skipping creation"
+  ansible.builtin.debug:
+    msg: "CT {{ ct_id }} ({{ ct_hostname }}) already exists. No changes made."
+  when: ct_exists.rc == 0
+
+# ── All creation tasks are skipped if CT exists ──────────────
+
+- name: "Create CT {{ ct_id }} ({{ ct_hostname }})"
+  when: ct_exists.rc != 0
+  block:
+
+    # ── Pre-flight checks ────────────────────────────────────
+
+    - name: "Find Debian template"
+      ansible.builtin.find:
+        paths: "{{ ct_template_dir }}"
+        patterns: "{{ ct_template_pattern }}"
+      register: ct_templates
+
+    - name: "Fail if no Debian template found"
+      ansible.builtin.fail:
+        msg: >
+          No Debian 12 template found in {{ ct_template_dir }}.
+          Download one:
+            pveam update
+            pveam download local debian-12-standard_12.12-1_amd64.tar.zst
+      when: ct_templates.files | length == 0
+
+    - name: "Set template path (latest version)"
+      ansible.builtin.set_fact:
+        ct_template_file: "{{ ct_templates.files | sort(attribute='path') | last | attr('path') }}"
+
+    - name: "Set template reference"
+      ansible.builtin.set_fact:
+        ct_template_ref: "local:vztmpl/{{ ct_template_file | basename }}"
+
+    # ── Create container ─────────────────────────────────────
+
+    - name: "Create LXC {{ ct_id }}"
+      ansible.builtin.command:
+        cmd: >
+          pct create {{ ct_id }} {{ ct_template_ref }}
+          --hostname {{ ct_hostname }}
+          --storage {{ ct_storage }}
+          --rootfs {{ ct_storage }}:{{ ct_disk_size }}
+          --cores {{ ct_cores }}
+          --memory {{ ct_memory }}
+          --swap {{ ct_swap }}
+          --net0 "name=eth0,bridge={{ ct_bridge }},ip={{ ct_ip }},gw={{ ct_gateway }}"
+          --nameserver {{ ct_nameserver }}
+          --searchdomain {{ ct_searchdomain }}
+          --unprivileged {{ ct_unprivileged | ternary('1', '0') }}
+          --features nesting={{ ct_nesting | ternary('1', '0') }}
+          --onboot {{ ct_onboot | ternary('1', '0') }}
+          --start 0
+
+    # ── Start container ──────────────────────────────────────
+
+    - name: "Start CT {{ ct_id }}"
+      ansible.builtin.command:
+        cmd: "pct start {{ ct_id }}"
+      when: ct_auto_start
+
+    - name: "Wait for container to boot (3s)"
+      ansible.builtin.pause:
+        seconds: 3
+      when: ct_auto_start
+
+    - name: "Verify container is running"
+      ansible.builtin.command:
+        cmd: "pct status {{ ct_id }}"
+      register: ct_status
+      changed_when: false
+      failed_when: "'running' not in ct_status.stdout"
+      when: ct_auto_start
+
+    # ── Summary ──────────────────────────────────────────────
+
+    - name: "CT creation complete"
+      ansible.builtin.debug:
+        msg: >-
+          CT {{ ct_id }} ({{ ct_hostname }}) created.
+          IP: {{ ct_ip }}, Memory: {{ ct_memory }}MB, Disk: {{ ct_disk_size }}GB.
+          {% if ct_auto_start %}Status: running.{% else %}Start with: pct start {{ ct_id }}{% endif %}

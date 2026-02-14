@@ -1,0 +1,31 @@
+---
+# proxmox-lxc role defaults
+# Override per-container via extra vars or a vars file
+
+# ── Container identity ───────────────────────────────────────
+# ct_id:       (required) Proxmox CTID
+# ct_hostname: (required) Container hostname
+
+# ── Hardware ─────────────────────────────────────────────────
+ct_cores: 1
+ct_memory: 256
+ct_swap: 128
+ct_disk_size: 4
+
+# ── Network ──────────────────────────────────────────────────
+# ct_ip:      (required) IP with CIDR, e.g., "10.10.100.53/24"
+# ct_gateway: (required) Gateway IP
+ct_bridge: vmbr0
+ct_nameserver: "1.1.1.1"
+ct_searchdomain: "local"
+
+# ── Storage & template ───────────────────────────────────────
+ct_storage: local-lvm
+ct_template_pattern: "debian-12-standard*.tar.zst"
+ct_template_dir: /var/lib/vz/template/cache
+
+# ── Container options ────────────────────────────────────────
+ct_unprivileged: true
+ct_nesting: true
+ct_onboot: true
+ct_auto_start: true

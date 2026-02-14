@@ -1,0 +1,11 @@
+---
+# Generic deployment defaults
+# These are overridden by playbook vars (-e app=xxx -e version=xxx)
+
+# app: ""           # Set via -e app=colossus-legal
+# version: ""       # Set via -e version=v1.0.0
+# action: deploy    # Set via playbook (deploy or rollback)
+
+# Health check settings
+health_check_retries: 12
+health_check_delay: 5

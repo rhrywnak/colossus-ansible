@@ -1,0 +1,19 @@
+---
+# manage-pbs-backups.yml — Manage PBS Backup Jobs
+#
+# Templates /etc/pve/jobs.cfg from the job definitions in
+# inventory/group_vars/proxmox.yml.
+#
+# jobs.cfg is on the Proxmox cluster filesystem — shared across
+# all nodes. run_once ensures we only write it from one node.
+#
+# Usage:
+#   ansible-playbook playbooks/manage-pbs-backups.yml --check --diff   # dry-run
+#   ansible-playbook playbooks/manage-pbs-backups.yml                   # execute
+
+- name: "Manage PBS backup jobs"
+  hosts: proxmox
+  become: true
+  run_once: true
+  roles:
+    - pbs-backup

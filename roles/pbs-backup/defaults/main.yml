@@ -1,0 +1,23 @@
+---
+# pbs-backup role defaults
+# Override in inventory/group_vars/proxmox.yml or host_vars
+
+# ── PBS configuration ────────────────────────────────────────
+pbs_jobs_file: /etc/pve/jobs.cfg
+pbs_storage: pbs-1
+
+# ── Default job settings ─────────────────────────────────────
+pbs_schedule: daily
+pbs_compress: zstd
+pbs_mode: snapshot
+pbs_enabled: 1
+
+# ── Backup job definitions ───────────────────────────────────
+# Each job has:
+#   name:  (required) Job ID — must be unique
+#   vmid:  (required) VM or CT ID to back up
+#   notes: (required) Human-readable description
+#
+# All other settings (schedule, compress, mode, storage) use
+# the defaults above unless overridden per-job.
+pbs_backup_jobs: []

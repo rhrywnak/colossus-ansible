@@ -1,0 +1,20 @@
+---
+# SECRETS — Copy this file to vault.yml and encrypt it:
+#
+#   cp vault.yml.example vault.yml
+#   ansible-vault encrypt vault.yml
+#   ansible-vault edit vault.yml   (to fill in real values)
+#
+# NEVER commit vault.yml unencrypted.
+
+# ── GitHub Container Registry ────────────────────────────────
+# Personal Access Token with read:packages scope
+# Create at: https://github.com/settings/tokens
+vault_ghcr_username: "GITHUB_USERNAME"
+vault_ghcr_token: "ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# ── Colossus-Legal: DEV ──────────────────────────────────────
+vault_colossus_legal_neo4j_password_dev: "CHANGE_ME"
+
+# ── Colossus-Legal: PROD ─────────────────────────────────────
+vault_colossus_legal_neo4j_password_prod: "CHANGE_ME"

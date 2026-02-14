@@ -1,0 +1,145 @@
+---
+# deploy-app/tasks/deploy.yml
+#
+# Deployment flow:
+#   1. Validate version is provided
+#   2. Read current manifest (if exists) to capture previous_version
+#   3. Login to container registry
+#   4. Pull new container images
+#   5. Run app-specific role (writes Quadlet files, env, config)
+#   6. Reload systemd and restart services
+#   7. Run health checks
+#   8. Write deployment manifest
+
+- name: "Validate version is provided"
+  ansible.builtin.assert:
+    that:
+      - version is defined and version | length > 0
+    fail_msg: "You must provide a version: -e version=v1.0.0"
+
+- name: "Display deployment info"
+  ansible.builtin.debug:
+    msg: >
+      Deploying {{ app }} {{ version }}
+      to {{ inventory_hostname }} ({{ ansible_host }})
+      Environment: {{ group_names | intersect(['dev', 'prod']) | first | default('unknown') }}
+
+# ── Step 1: Read current state ───────────────────────────────
+
+- name: "Check for existing deployment manifest"
+  ansible.builtin.stat:
+    path: "{{ deployment_manifest_dir }}/{{ app }}.json"
+  register: existing_manifest
+
+- name: "Read current manifest"
+  ansible.builtin.slurp:
+    src: "{{ deployment_manifest_dir }}/{{ app }}.json"
+  register: current_manifest_raw
+  when: existing_manifest.stat.exists
+
+- name: "Parse current manifest"
+  ansible.builtin.set_fact:
+    current_manifest: "{{ current_manifest_raw.content | b64decode | from_json }}"
+  when: existing_manifest.stat.exists
+
+- name: "Capture previous version"
+  ansible.builtin.set_fact:
+    previous_version: "{{ current_manifest.version | default('none') }}"
+  when: existing_manifest.stat.exists
+
+- name: "No previous deployment found"
+  ansible.builtin.set_fact:
+    previous_version: "none"
+  when: not existing_manifest.stat.exists
+
+- name: "Check if already at target version"
+  ansible.builtin.debug:
+    msg: "WARNING: {{ app }} is already at version {{ version }}. Re-deploying anyway."
+  when:
+    - existing_manifest.stat.exists
+    - current_manifest.version == version
+
+# ── Step 2: Login to container registry ──────────────────────
+
+- name: "Login to GitHub Container Registry"
+  containers.podman.podman_login:
+    registry: "ghcr.io"
+    username: "{{ vault_ghcr_username }}"
+    password: "{{ vault_ghcr_token }}"
+  no_log: true
+
+# ── Step 3: Pull container images ────────────────────────────
+
+- name: "Pull container images"
+  containers.podman.podman_image:
+    name: "{{ container_registry }}/{{ item.image_name }}:{{ version }}"
+    pull: true
+    force: true
+  loop: "{{ app_def.containers }}"
+  loop_control:
+    label: "{{ item.image_name }}:{{ version }}"
+
+# ── Step 4: Run app-specific role ────────────────────────────
+# This writes Quadlet .container files, environment files,
+# and any app-specific config (e.g., frontend config.js)
+
+- name: "Ensure config directories exist"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ quadlet_dir }}"
+    - "{{ app_env_dir }}"
+    - "{{ app_config_dir }}/{{ app }}"
+    - "{{ deployment_manifest_dir }}"
+
+- name: "Run app-specific configuration ({{ app_def.role }})"
+  ansible.builtin.include_role:
+    name: "{{ app_def.role }}"
+  vars:
+    deploy_version: "{{ version }}"
+
+# ── Step 5: Reload systemd and restart services ──────────────
+
+- name: "Reload systemd (picks up new/changed Quadlet files)"
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: "Restart application containers"
+  ansible.builtin.systemd:
+    name: "{{ item.name }}"
+    state: restarted
+    enabled: true
+  loop: "{{ app_def.containers }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ── Step 6: Health checks ────────────────────────────────────
+
+- name: "Wait for services to start"
+  ansible.builtin.pause:
+    seconds: 5
+
+- name: "Run health checks"
+  ansible.builtin.include_tasks: validate.yml
+
+# ── Step 7: Write deployment manifest ────────────────────────
+
+- name: "Write deployment manifest"
+  ansible.builtin.template:
+    src: deployment-manifest.json.j2
+    dest: "{{ deployment_manifest_dir }}/{{ app }}.json"
+    mode: "0644"
+  vars:
+    manifest_version: "{{ version }}"
+    manifest_previous_version: "{{ previous_version }}"
+    manifest_timestamp: "{{ ansible_date_time.iso8601 }}"
+    manifest_environment: "{{ group_names | intersect(['dev', 'prod']) | first | default('unknown') }}"
+
+- name: "Deployment complete"
+  ansible.builtin.debug:
+    msg: >
+      ✓ {{ app }} {{ version }} deployed successfully to {{ inventory_hostname }}.
+      Previous version: {{ previous_version }}.
+      Manifest: {{ deployment_manifest_dir }}/{{ app }}.json

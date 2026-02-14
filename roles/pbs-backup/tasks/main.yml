@@ -1,0 +1,46 @@
+---
+# pbs-backup/tasks/main.yml
+#
+# Manages PBS backup jobs in /etc/pve/jobs.cfg.
+# This file is on the Proxmox cluster filesystem (pmxcfs),
+# shared across all nodes — only needs to run on one node.
+#
+# Required variables:
+#   pbs_backup_jobs: list of job definitions (see defaults/main.yml)
+
+- name: "Validate pbs_backup_jobs is defined and non-empty"
+  ansible.builtin.assert:
+    that:
+      - pbs_backup_jobs is defined
+      - pbs_backup_jobs | length > 0
+    fail_msg: >
+      pbs_backup_jobs must contain at least one job definition.
+      Define jobs in inventory/group_vars/proxmox.yml
+    quiet: true
+
+- name: "Deploy PBS backup jobs configuration"
+  ansible.builtin.template:
+    src: jobs.cfg.j2
+    dest: "{{ pbs_jobs_file }}"
+    owner: root
+    group: www-data
+    mode: "0640"
+    backup: true
+  register: pbs_jobs_result
+
+# ── Validation ───────────────────────────────────────────────
+
+- name: "Verify jobs.cfg is readable by Proxmox"
+  ansible.builtin.command:
+    cmd: grep -c "^vzdump:" {{ pbs_jobs_file }}
+  register: job_count
+  changed_when: false
+  failed_when: job_count.stdout | int != pbs_backup_jobs | length
+
+- name: "Show change summary"
+  ansible.builtin.debug:
+    msg: >-
+      PBS jobs {{ 'UPDATED' if pbs_jobs_result is changed else 'unchanged' }}.
+      {{ pbs_backup_jobs | length }} backup jobs configured.
+      {% if pbs_jobs_result.backup_file is defined %}Backup: {{ pbs_jobs_result.backup_file }}{% endif %}
+  when: pbs_jobs_result is changed

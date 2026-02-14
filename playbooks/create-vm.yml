@@ -1,0 +1,29 @@
+---
+# create-vm.yml — Create a Fedora CoreOS VM on a Proxmox Host
+#
+# This playbook creates a single CoreOS VM. Pass all parameters
+# via extra vars or a vars file.
+#
+# Usage:
+#   # Create PROD DB VM on pve-1
+#   ansible-playbook playbooks/create-vm.yml -l pve-1 \
+#     -e vm_id=110 \
+#     -e vm_name=colossus-prod-db1 \
+#     -e vm_ignition=colossus-prod-db1.ign \
+#     -e vm_cores=4 \
+#     -e vm_memory=16384
+#
+#   # Or use a vars file for complex definitions (virtiofs, etc.)
+#   ansible-playbook playbooks/create-vm.yml -l pve-1 \
+#     -e @vars/vm-110-prod-db.yml
+#
+#   # Dry-run (checks pre-flight only — qm commands can't run in check mode)
+#   ansible-playbook playbooks/create-vm.yml -l pve-1 \
+#     -e @vars/vm-110-prod-db.yml --check
+
+- name: "Create CoreOS VM"
+  hosts: proxmox
+  become: true
+  gather_facts: false
+  roles:
+    - proxmox-vm

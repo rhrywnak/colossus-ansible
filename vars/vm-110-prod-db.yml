@@ -1,0 +1,18 @@
+---
+# VM-110: PROD DB (pve-1)
+# Usage: ansible-playbook playbooks/create-vm.yml -l pve-1 -e @vars/vm-110-prod-db.yml
+
+vm_id: 110
+vm_name: colossus-prod-db1
+vm_ignition: colossus-prod-db1.ign
+vm_cores: 4
+vm_memory: 16384
+vm_disk_grow: "+40G"
+
+vm_virtiofs_shares:
+  - dirid: prod-db-postgres
+    cache: always
+  - dirid: prod-db-neo4j
+    cache: always
+  - dirid: prod-db-qdrant
+    cache: always

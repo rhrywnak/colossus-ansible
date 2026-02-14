@@ -1,0 +1,44 @@
+---
+# Traefik (CT-313) — route definitions
+#
+# This is the single source of truth for all Traefik routes.
+# The traefik-route role templates /etc/traefik/dynamic/services.yml
+# from this list. If a route isn't here, it won't exist on disk.
+#
+# Route properties:
+#   name:        (required) Unique router/service identifier
+#   host:        (required) FQDN for the Host() match rule
+#   backend_url: (required*) Backend service URL
+#   service:     (required*) Built-in service override (e.g., api@internal)
+#   external:    (optional) true = create HTTP router for Cloudflare Tunnel
+#
+#   * Exactly one of backend_url or service must be specified.
+
+traefik_routes:
+  # ── Colossus-Legal PROD ──────────────────────────────────
+  - name: colossus-legal-frontend
+    host: "colossus-legal.{{ domain }}"
+    backend_url: "http://10.10.100.120:5473"
+    external: true
+
+  - name: colossus-legal-api
+    host: "colossus-legal-api.{{ domain }}"
+    backend_url: "http://10.10.100.120:3403"
+    external: true
+
+  # ── Colossus-Legal DEV ───────────────────────────────────
+  - name: colossus-legal-dev
+    host: "colossus-legal-dev.{{ domain }}"
+    backend_url: "http://10.10.100.220:5473"
+    external: false
+
+  - name: colossus-legal-api-dev
+    host: "colossus-legal-api-dev.{{ domain }}"
+    backend_url: "http://10.10.100.220:3403"
+    external: false
+
+  # ── Infrastructure ───────────────────────────────────────
+  - name: traefik-dashboard
+    host: "traefik.{{ domain }}"
+    service: "api@internal"
+    external: false

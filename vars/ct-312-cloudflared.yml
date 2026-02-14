@@ -1,0 +1,10 @@
+---
+# CT-312: cloudflared (pve-3)
+# Usage: ansible-playbook playbooks/create-lxc.yml -l pve-3 -e @vars/ct-312-cloudflared.yml
+
+ct_id: 312
+ct_hostname: cloudflared
+ct_ip: "10.10.100.54/24"
+ct_gateway: "10.10.100.1"
+ct_memory: 256
+ct_disk_size: 4

@@ -1,0 +1,36 @@
+---
+# playbooks/rollback-app.yml
+#
+# Rollback an application to its previous version.
+# Reads the deployment manifest to determine the rollback target.
+#
+# Usage:
+#   ansible-playbook playbooks/rollback-app.yml \
+#     -e app=colossus-legal \
+#     -l prod \
+#     --ask-vault-pass
+
+- name: "Rollback {{ app }}"
+  hosts: app_vms
+  gather_facts: true
+
+  pre_tasks:
+    - name: "Validate parameters"
+      ansible.builtin.assert:
+        that:
+          - app is defined
+        fail_msg: "Required: -e app=<name>"
+      run_once: true
+
+    - name: "Confirm PROD rollback"
+      ansible.builtin.pause:
+        prompt: >
+          ⚠️  You are rolling back {{ app }} on PRODUCTION.
+          Press Enter to continue or Ctrl+C to abort.
+      when: "'prod' in group_names"
+      run_once: true
+
+  roles:
+    - role: deploy-app
+      vars:
+        action: rollback

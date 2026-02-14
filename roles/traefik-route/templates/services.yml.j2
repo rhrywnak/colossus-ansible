@@ -1,0 +1,80 @@
+# {{ ansible_managed }}
+# =============================================================================
+# Traefik Dynamic Configuration — Routers & Services
+# =============================================================================
+# This file is managed by Ansible (role: traefik-route).
+# Manual edits will be overwritten on the next playbook run.
+# Hot-reloaded by Traefik — no restart needed after changes.
+# =============================================================================
+
+http:
+  # ==========================================================================
+  # MIDDLEWARES
+  # ==========================================================================
+  middlewares:
+    # Redirect HTTP → HTTPS (LAN browsers only — see priority notes)
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+  # ==========================================================================
+  # ROUTERS
+  # ==========================================================================
+  routers:
+
+    # --- HTTP routers for Cloudflare Tunnel traffic (no redirect) ---
+{% for route in traefik_routes if route.external | default(false) %}
+    {{ route.name }}-http:
+      rule: "Host(`{{ route.host }}`)"
+      entryPoints:
+        - http
+      service: {{ route.service | default(route.name) }}
+      priority: 10
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}
+
+    # --- HTTP catch-all: redirect LAN browsers to HTTPS ---
+    # Priority 1 (lowest) — named routers on specific hosts take precedence
+    http-catchall:
+      rule: "HostRegexp(`.+`)"
+      entryPoints:
+        - http
+      middlewares:
+        - redirect-to-https
+      service: noop@internal
+      priority: 1
+
+    # --- HTTPS routers ---
+{% for route in traefik_routes %}
+    {{ route.name }}:
+      rule: "Host(`{{ route.host }}`)"
+      entryPoints:
+        - https
+      service: {{ route.service | default(route.name) }}
+      tls:
+        certResolver: {{ traefik_cert_resolver }}
+        domains:
+          - main: "*.{{ traefik_domain }}"
+            sans:
+              - "{{ traefik_domain }}"
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}
+
+  # ==========================================================================
+  # SERVICES (backend targets)
+  # ==========================================================================
+  services:
+{% for route in traefik_routes if route.backend_url is defined %}
+    {{ route.name }}:
+      loadBalancer:
+        servers:
+          - url: "{{ route.backend_url }}"
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}

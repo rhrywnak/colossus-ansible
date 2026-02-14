@@ -1,0 +1,22 @@
+---
+# deploy-app/tasks/validate.yml
+#
+# Runs health checks defined in the app's configuration (group_vars/all.yml).
+# Used both during deployment and as a standalone validation.
+
+- name: "Run health checks for {{ app }}"
+  ansible.builtin.uri:
+    url: "{{ item.url }}"
+    status_code: "{{ item.expect_status | default(200) }}"
+    return_content: "{{ item.expect_body is defined }}"
+  register: health_result
+  retries: "{{ health_check_retries }}"
+  delay: "{{ health_check_delay }}"
+  until: health_result.status == (item.expect_status | default(200))
+  loop: "{{ app_def.health_checks }}"
+  loop_control:
+    label: "{{ item.description | default(item.url) }}"
+
+- name: "All health checks passed"
+  ansible.builtin.debug:
+    msg: "✓ {{ app_def.health_checks | length }} health check(s) passed for {{ app }}"

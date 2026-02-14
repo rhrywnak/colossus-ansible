@@ -1,0 +1,30 @@
+# Managed by Ansible — do not edit manually
+
+server {
+    listen 5473;
+    server_name localhost;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA routing — serve index.html for all routes
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Runtime config — must not be cached (changes per environment/deploy)
+    location = /config.js {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+
+    # Cache static assets aggressively (hashed filenames from Vite)
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+}

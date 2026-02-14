@@ -1,0 +1,18 @@
+---
+# VM-210: DEV DB (pve-2)
+# Usage: ansible-playbook playbooks/create-vm.yml -l pve-2 -e @vars/vm-210-dev-db.yml
+
+vm_id: 210
+vm_name: colossus-dev-db1
+vm_ignition: colossus-dev-db1.ign
+vm_cores: 4
+vm_memory: 16384
+vm_disk_grow: "+40G"
+
+vm_virtiofs_shares:
+  - dirid: db-postgres
+    cache: always
+  - dirid: db-neo4j
+    cache: always
+  - dirid: db-qdrant
+    cache: always

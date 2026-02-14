@@ -1,0 +1,8 @@
+---
+- name: Gather facts from all Colossus hosts
+  hosts: all:!truenas
+  gather_facts: true
+  tasks:
+    - name: Display host summary
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} | {{ ansible_distribution | default('N/A') }} {{ ansible_distribution_version | default('') }} | {{ ansible_default_ipv4.address | default(ansible_host) }}"

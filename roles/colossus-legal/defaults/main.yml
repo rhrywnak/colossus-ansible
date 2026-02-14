@@ -1,0 +1,10 @@
+---
+# Colossus-Legal application defaults
+# Override in group_vars/dev.yml and group_vars/prod.yml
+
+colossus_legal_backend_port: 3403
+colossus_legal_frontend_port: 5473
+
+# Document storage — mounted read-only into the backend container
+colossus_legal_documents_host_path: "/var/colossus/legal-documents"
+colossus_legal_documents_container_path: "/data/documents"

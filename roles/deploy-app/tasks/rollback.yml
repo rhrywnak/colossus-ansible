@@ -1,0 +1,51 @@
+---
+# deploy-app/tasks/rollback.yml
+#
+# Reads the deployment manifest to find previous_version,
+# then re-deploys that version using the standard deploy flow.
+
+- name: "Check for deployment manifest"
+  ansible.builtin.stat:
+    path: "{{ deployment_manifest_dir }}/{{ app }}.json"
+  register: rollback_manifest
+
+- name: "Fail if no manifest exists"
+  ansible.builtin.fail:
+    msg: >
+      No deployment manifest found at {{ deployment_manifest_dir }}/{{ app }}.json.
+      Cannot determine previous version. Deploy a specific version instead:
+        -e action=deploy -e version=v1.0.0
+  when: not rollback_manifest.stat.exists
+
+- name: "Read deployment manifest"
+  ansible.builtin.slurp:
+    src: "{{ deployment_manifest_dir }}/{{ app }}.json"
+  register: rollback_manifest_raw
+
+- name: "Parse deployment manifest"
+  ansible.builtin.set_fact:
+    rollback_data: "{{ rollback_manifest_raw.content | b64decode | from_json }}"
+
+- name: "Determine rollback target"
+  ansible.builtin.set_fact:
+    rollback_version: "{{ rollback_data.previous_version }}"
+    current_version: "{{ rollback_data.version }}"
+
+- name: "Fail if no previous version"
+  ansible.builtin.fail:
+    msg: >
+      Current version is {{ current_version }} but previous_version is 'none'.
+      This was the first deployment — there is nothing to roll back to.
+  when: rollback_version == "none"
+
+- name: "Confirm rollback target"
+  ansible.builtin.debug:
+    msg: >
+      Rolling back {{ app }} from {{ current_version }} → {{ rollback_version }}
+      on {{ inventory_hostname }} ({{ ansible_host }})
+
+# Re-use the deploy flow with the rollback version
+- name: "Execute rollback (deploy previous version)"
+  ansible.builtin.include_tasks: deploy.yml
+  vars:
+    version: "{{ rollback_version }}"

@@ -1,0 +1,52 @@
+---
+# playbooks/validate-app.yml
+#
+# Run health checks against a deployed application without modifying anything.
+#
+# Usage:
+#   ansible-playbook playbooks/validate-app.yml \
+#     -e app=colossus-legal \
+#     -l dev
+
+- name: "Validate {{ app }}"
+  hosts: app_vms
+  gather_facts: true
+
+  pre_tasks:
+    - name: "Validate parameters"
+      ansible.builtin.assert:
+        that:
+          - app is defined
+          - app in apps
+        fail_msg: "Required: -e app=<n>"
+
+    - name: "Set app definition"
+      ansible.builtin.set_fact:
+        app_def: "{{ apps[app] }}"
+
+  tasks:
+    - name: "Check deployment manifest"
+      ansible.builtin.slurp:
+        src: "{{ deployment_manifest_dir }}/{{ app }}.json"
+      register: manifest_raw
+      ignore_errors: true
+
+    - name: "Display current deployment"
+      ansible.builtin.debug:
+        msg: >
+          Currently deployed: {{ (manifest_raw.content | b64decode | from_json).version }}
+          (deployed at {{ (manifest_raw.content | b64decode | from_json).deployed_at }})
+      when: manifest_raw is succeeded
+
+    - name: "Run health checks"
+      ansible.builtin.uri:
+        url: "{{ item.url }}"
+        status_code: "{{ item.expect_status | default(200) }}"
+      register: health_result
+      loop: "{{ app_def.health_checks }}"
+      loop_control:
+        label: "{{ item.description | default(item.url) }}"
+
+    - name: "Validation summary"
+      ansible.builtin.debug:
+        msg: "✓ All {{ app_def.health_checks | length }} health checks passed for {{ app }}"

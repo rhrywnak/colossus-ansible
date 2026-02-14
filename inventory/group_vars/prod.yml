@@ -1,0 +1,16 @@
+---
+# PROD environment configuration
+# Applied when deploying with: -l prod
+
+# ── Network ──────────────────────────────────────────────────
+prod_db_host: 10.10.100.110       # VM-110 (colossus-prod-db1)
+# prod_app_host: 10.10.100.120    # VM-120 (colossus-prod-app1) — uncomment when created
+
+# ── Colossus-Legal: Backend ──────────────────────────────────
+colossus_legal_neo4j_uri: "bolt://{{ prod_db_host }}:7687"
+colossus_legal_neo4j_user: "neo4j"
+colossus_legal_rust_log: "warn"
+colossus_legal_document_path: "/data/documents"
+
+# ── Colossus-Legal: Frontend ─────────────────────────────────
+colossus_legal_api_url: "http://{{ ansible_host }}:3403"

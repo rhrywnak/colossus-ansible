@@ -1,0 +1,31 @@
+---
+# Pi-hole (CT-311) — DNS record definitions
+#
+# This is the single source of truth for all Pi-hole local DNS records.
+# The pihole-dns role manages records via the Pi-hole v6 REST API.
+# Records not listed here WILL be removed from Pi-hole.
+#
+# Format: "IP FQDN [ALIAS ...]" (standard HOSTS format)
+# Records must match Pi-hole's stored format exactly for idempotency.
+
+pihole_dns_records:
+  # ── Proxmox hosts ─────────────────────────────────────────
+  - "10.10.100.3 pve-1.cogmai.com pve-1"
+  - "10.10.100.2 pve-2.cogmai.com pve-2"
+  - "10.10.100.5 pve-3.cogmai.com pve-3"
+
+  # ── Application routes (via Traefik) ──────────────────────
+  - "10.10.100.55 colossus-legal.cogmai.com legal"
+  - "10.10.100.55 colossus-legal-api.cogmai.com"
+  - "10.10.100.55 colossus-legal-api-dev.cogmai.com"
+  - "10.10.100.55 traefik.cogmai.com"
+
+  # ── Application routes (direct — DEV) ─────────────────────
+  - "10.10.100.220 colossus-legal-dev.cogmai.com legal-dev"
+
+  # ── Database VMs ──────────────────────────────────────────
+  - "10.10.100.110 colossus-prod-db1.cogmai.com prod-db1"
+  - "10.10.100.200 colossus-dev-db1.cogmai.com dev-db1"
+
+  # ── Infrastructure ────────────────────────────────────────
+  - "10.10.100.53 pihole.cogmai.com pihole"

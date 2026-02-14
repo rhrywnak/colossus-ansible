@@ -1,0 +1,25 @@
+---
+# create-lxc.yml — Create an LXC Container on a Proxmox Host
+#
+# This playbook creates a single LXC container. Pass all parameters
+# via extra vars or a vars file.
+#
+# Usage:
+#   # Create Pi-hole container on pve-3
+#   ansible-playbook playbooks/create-lxc.yml -l pve-3 \
+#     -e ct_id=311 \
+#     -e ct_hostname=pihole \
+#     -e ct_ip=10.10.100.53/24 \
+#     -e ct_gateway=10.10.100.1 \
+#     -e ct_memory=512
+#
+#   # Or use a vars file
+#   ansible-playbook playbooks/create-lxc.yml -l pve-3 \
+#     -e @vars/ct-311-pihole.yml
+
+- name: "Create LXC container"
+  hosts: proxmox
+  become: true
+  gather_facts: false
+  roles:
+    - proxmox-lxc

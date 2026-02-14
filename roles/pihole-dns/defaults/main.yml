@@ -1,0 +1,17 @@
+---
+# pihole-dns role defaults
+# Override in inventory/host_vars/pihole.yml
+
+# ── Pi-hole API ──────────────────────────────────────────────
+pihole_api_base: "http://localhost/api/config/dns/hosts"
+
+# ── DNS record definitions ───────────────────────────────────
+# Each entry is a string in HOSTS format: "IP FQDN [ALIAS ...]"
+# This matches exactly what Pi-hole stores in pihole.toml dns.hosts.
+#
+# Examples:
+#   - "10.10.100.55 myapp.cogmai.com"
+#   - "10.10.100.3 pve-1.cogmai.com pve-1"
+#
+# This list is declarative: records not listed here WILL be removed.
+pihole_dns_records: []

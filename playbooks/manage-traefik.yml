@@ -1,0 +1,16 @@
+---
+# manage-traefik.yml — Manage Traefik Dynamic Configuration
+#
+# Renders /etc/traefik/dynamic/services.yml from the route
+# definitions in inventory/host_vars/traefik.yml.
+# Traefik hot-reloads — no service restart needed.
+#
+# Usage:
+#   ansible-playbook playbooks/manage-traefik.yml --check --diff   # dry-run
+#   ansible-playbook playbooks/manage-traefik.yml                   # execute
+
+- name: "Manage Traefik routes and services"
+  hosts: traefik
+  become: true
+  roles:
+    - traefik-route

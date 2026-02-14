@@ -1,0 +1,31 @@
+---
+# proxmox-vm role defaults
+# Override per-VM via extra vars or a vars file
+
+# ── VM identity ──────────────────────────────────────────────
+# vm_id:          (required) Proxmox VMID
+# vm_name:        (required) VM hostname
+# vm_ignition:    (required) Ignition filename in snippets dir
+
+# ── Hardware ─────────────────────────────────────────────────
+vm_cores: 4
+vm_memory: 16384
+vm_disk_grow: "+40G"
+vm_machine: q35
+vm_bridge: vmbr0
+vm_scsihw: virtio-scsi-pci
+
+# ── Storage ──────────────────────────────────────────────────
+vm_storage: local-lvm
+vm_coreos_store_id: coreos
+vm_coreos_store_path: /var/coreos
+vm_coreos_snippets_dir: "{{ vm_coreos_store_path }}/snippets"
+vm_coreos_images_dir: "{{ vm_coreos_store_path }}/images"
+
+# ── virtiofs shares (optional) ───────────────────────────────
+# List of dicts: [{dirid: "prod-db-postgres", cache: "always"}, ...]
+# Leave empty for VMs that don't need virtiofs (e.g., app VMs).
+vm_virtiofs_shares: []
+
+# ── Post-creation ────────────────────────────────────────────
+vm_auto_start: false
