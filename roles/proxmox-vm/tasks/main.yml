@@ -59,7 +59,7 @@
 
     - name: "Set CoreOS image path (latest version)"
       ansible.builtin.set_fact:
-        vm_coreos_qcow: "{{ coreos_images.files | sort(attribute='path') | last | attr('path') }}"
+        vm_coreos_qcow: "{{ (coreos_images.files | sort(attribute='path') | last).path }}"
 
     - name: "Verify Ignition file exists"
       ansible.builtin.stat:

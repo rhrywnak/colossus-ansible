@@ -1,0 +1,290 @@
+{
+  "ignition": {
+    "version": "3.4.0"
+  },
+  "passwd": {
+    "users": [
+      {
+        "name": "core",
+        "sshAuthorizedKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ1dOykw0BuYrBAagKc3Ra92H9fNm5Nq8mp2N46mUpD6"
+        ]
+      }
+    ]
+  },
+  "storage": {
+    "directories": [
+      {
+        "path": "/etc/monitoring",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/prometheus",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/prometheus/rules",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/loki",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/grafana",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/grafana/provisioning",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/grafana/provisioning/datasources",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/grafana/provisioning/dashboards",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/pve-exporter",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/alertmanager",
+        "mode": 493
+      },
+      {
+        "path": "/etc/monitoring/alloy",
+        "mode": 493
+      },
+      {
+        "path": "/var/lib/monitoring",
+        "mode": 493
+      },
+      {
+        "group": {
+          "id": 65534
+        },
+        "path": "/var/lib/monitoring/prometheus",
+        "user": {
+          "id": 65534
+        },
+        "mode": 493
+      },
+      {
+        "group": {
+          "id": 10001
+        },
+        "path": "/var/lib/monitoring/loki",
+        "user": {
+          "id": 10001
+        },
+        "mode": 493
+      },
+      {
+        "group": {
+          "id": 10001
+        },
+        "path": "/var/lib/monitoring/loki/chunks",
+        "user": {
+          "id": 10001
+        },
+        "mode": 493
+      },
+      {
+        "group": {
+          "id": 10001
+        },
+        "path": "/var/lib/monitoring/loki/index",
+        "user": {
+          "id": 10001
+        },
+        "mode": 493
+      },
+      {
+        "group": {
+          "id": 10001
+        },
+        "path": "/var/lib/monitoring/loki/cache",
+        "user": {
+          "id": 10001
+        },
+        "mode": 493
+      },
+      {
+        "group": {
+          "id": 10001
+        },
+        "path": "/var/lib/monitoring/loki/compactor",
+        "user": {
+          "id": 10001
+        },
+        "mode": 493
+      },
+      {
+        "group": {
+          "id": 10001
+        },
+        "path": "/var/lib/monitoring/loki/rules",
+        "user": {
+          "id": 10001
+        },
+        "mode": 493
+      },
+      {
+        "group": {
+          "id": 472
+        },
+        "path": "/var/lib/monitoring/grafana",
+        "user": {
+          "id": 472
+        },
+        "mode": 493
+      },
+      {
+        "path": "/etc/containers/systemd",
+        "mode": 493
+      }
+    ],
+    "files": [
+      {
+        "overwrite": true,
+        "path": "/etc/hostname",
+        "contents": {
+          "compression": "",
+          "source": "data:,monitoring"
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/NetworkManager/system-connections/ens18.nmconnection",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/1SMwarCMBBF9/Mvr6/VWtzkS0oXY+ZqA82kJBOlfy9oEYW7upxzRp9U4S0knSiIg5buTLatcLAZWWEU1JCv7PGnHLEjXC3trrNcQTSG9d5PFGFzEhdZKy/EIhmloLiubV5rm9Pwf+jpxoYHb19/R6I/3PEdHT5RCYUvC4SeAQAA//88GBo0twAAAA=="
+        },
+        "mode": 384
+      },
+      {
+        "path": "/etc/monitoring/secrets.env",
+        "contents": {
+          "compression": "",
+          "source": "data:,GF_SECURITY_ADMIN_USER%3Dadmin%0AGF_SECURITY_ADMIN_PASSWORD%3D2mRFCKyc5OZUeYI9b0%2F0%2FNFp%2FYnVnYYC%0AGF_SERVER_ROOT_URL%3Dhttps%3A%2F%2Fgrafana.cogmai.com%0AGF_SERVER_DOMAIN%3Dgrafana.cogmai.com%0A"
+        },
+        "mode": 384
+      },
+      {
+        "path": "/etc/containers/systemd/monitoring.network",
+        "contents": {
+          "compression": "",
+          "source": "data:,%5BNetwork%5D%0ANetworkName%3Dmonitoring%0ADriver%3Dbridge%0A"
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/containers/systemd/prometheus.container",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/4ySQW8TMRCF7/4V/QHYSempkXyggFAvVYQESI1y8Hrfbka1PWE8uyH8epSk0C2QqpfReN7nN3N4qy+FdG0+oEahrRIXvxTO0A2Gar6FotUX6I7lwXJJVOA0SA817zqFvKhlLqQsVHr7iLkKGSnCfMb3gQT1Jcas3nPRQAWyNrc59PAtxweII55thfOxnC5djFfurbs0f37chQz/pJu7k/lkn1kOTaK6WbKov55fzxeHYr5yGjL8DBpnT/Bk1aR1+5wWR/K8LPzm/hWmMiTUf7xO02cWY5BZoub/Notpf28+/kD01kYuHfWuo/R4wtlrL6ytyhJ6OK1t47ZBN37C/K0LFOUQGqeU4a/m7Xmi0k/4y/mnmwtrd2gcSmgSbKIOcR8Tno8FmRV2J6SHRwSNEGNWt6VqSGl9jCbam73PQ1KyQ4X8Tt+vAAAA//+AJsk11AIAAA=="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/containers/systemd/loki.container",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/3yRy2oyQRCF9/Us/8z4x6wGepHbQggigSSguGjbmkkx3VVJdY2Jbx8cLxEXbs6iz8d3oGvxymRLeMQclD6NhN2zdATvni07RvsW7QrhSIyleW3R4K4x1KtdEiYTJW6LA1Zm1A0FhBf86kkxX2Ng8SBsnhh1CZPkW3RrCR1qSVK16hvPvorSUT0ub8sbONFTn9DtCpjulWcrMOtXkfLHTNTc+P9oVO8C3iT2CV2FFqo/eLAPUQThhtpym2I9QENz9qjyb36ybLxWkVaXpnqfc3j6weCOyobiYfjCCbCYcDYf43I4BK7vty710ajoM+rxr38DAAD//9E3wMy8AQAA"
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/containers/systemd/grafana.container",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/3yS0WvbMBDG3/W3LHa6sZeAHtTG9QyZE+y4pS1BqO7FOyqfutPZY//9SNt4ZQt5kUDf7/tOcN9DQyg7tYTYMr4IBtI5u70jp24dSdQE8ivw8yyQR4JEHHcgyuwF+KzWB0IJjNTN3rEkAo/Ygqrg54AM8RyjHq4CiUMC3qmidx3op9A+AycY0u7th8d7cXGRfE0+q8lRuh70u6jKt+QPw9RmePQYf2wCi/4yn88Xh0PdBD/0oNPRcerxMf1rmAZN2vHhfnKBtCcc6QuHESMGQuoWr9BJhcOne5XRiByoB5Jr9P9nRmgZJCZA40dW59fWNNtv1pTr8u77uqltVprLVbbUe+cj/Ms2dVbV1qxW61tbF3lpm81psM6umqrY3tllUR/ybF6ZG7M1lRYeDisqKIrzfvdaFXi6/K37wQvOhgh8bMOfAAAA//9aIntvYQIAAA=="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/containers/systemd/pve-exporter.container",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/3yQzW7qMBCF9/MUPMCNc0vVRZG86A8LNiiqVCoVZeGGaRhhe9LxOC1vXxEoZMXGlj2fznw669dIWsMzpkaoU+JoK+GAusWcJtVqPpn/dCyKAm8uarIR9ZtlV3D0FNGokxYVHj4V5eoscCRlodgWJ8wklJ4ahBf8yiSYrjGwfuKojiJKDYvgWrQbbnYohrjshEPX43AfzYuuxwJP5rNbc2f+wzlg6QLaMQDL47aRAFT5w1PaVixq76fTm9nhgBX7HNCWqE15gctx2OFh9sHPBuiidP4X/vcOsF7EpM77eugVN497G7JXKnJC+avuNwAA//9oUo9LngEAAA=="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/containers/systemd/alertmanager.container",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/3yQvU4rQQyFez/L3dlcaEikKcJPkSaKkACJaIth4l2szNjB4w3k7REhwG6TxpJ9PvtYZ/3AZA3cYolKOyNhP0+olgOHDhWeAlvxjPYuuq2EEzE6C9qhwbw11LNaFiYTJe6qE+YK6p4iwj2+9aRYzjGwvhG2QIzawCKHDv1G4hbVkdQ7lVyHwa+z/cRdXLn/8Lu0DBn9EIHlt8PAFFb9S6LyuhI1P51ML2dfBR4l9Rl9jRbrP3jsdxRHE5V/z3D3gdFXVRRuqXMtpdOZITlq3CEngPWCi4WUmmPmuLk++Nwno6ovqD+xfgYAAP//tLe3Vq8BAAA="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/containers/systemd/alloy.container",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/3yRTW/iQAyG7/MrctyVNpNNCxyQ5kA/xQUhKlqpiMM0McFiYlOPQ8u/r0jol9SikeZgP7If613MCXVpriAWgltFJncrfuXJJ6MQeJ/8mRPeYHK3j4GrZAYF4A7kr3nwpNER6AvLJmUKSGDVSwVqRisFOdmrmVBZkKr0iNkIssMCzAyeGxSIpxizuGRSjwSyNOPaV+BKLjYgFjmrOv/MH/yHu9wObG4++ImvwbUtM+mmfllkps1TwLiesqjr571hP+9lTbn9Vs/PznuDYfubew5NDS4DLbLPMd3qrGBaYWU7jxb5oS7879Fcv0LhpKHkFypJ08PpIHaturUBowKlvizF/bftO/qYxZii+hCWbUBQXuxd3QTFtIkg7xm8BQAA//8Kz2ME9QEAAA=="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/monitoring/prometheus/prometheus.yml",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/6RUT4/aTgy951NY+h3C75BtEgha5tbD3vdQ9bJCI5OYMO1kJppxEP321eQPRFvIrloJCfSe7Wf7Ma61PaAWEYAvHbYklWFyZ9QCssJHAHRG3SEra95REWpyrEwdkvvfDRqsyfkAACTgGVmVsrTmqOoRHRhGVxN7AW/xPFPs0t063kfR2Mss8z9IEnh19tLYC5S680wOVmeF8Pr9BV4urXVM7n9IkigI/LAHabAhAXE7JMW9fEPsVOlli3wS8KU9Uw+36LC5dtjYqtMk4K2iI3aa9yM+yoaus3gCja1ojtwf+jbydQsBzNKn/pM+rR/g+QO86HFHGg+k/1TztnMlyZ4Na5YSq8qR91LurxWHloYgAVL2W5ADulBpHvaomDKe0ZT0bvyb1rWdawFHrcaSGjIsoD1TQqOpYpfnWTT9B75qbX8B1mTYw+pkPU+m3jMfQ3T8T8aILF9vikf2LLLFIptl6TKfL/N5+gH/QX6xPFqxWaaXh8s302om4745pKP6CatDpzQnyoTn3BCfqPNApmqtMnzPQx4SP+dieInzHp/T5zxclOmCqORkNcGqVeF7K2npcvQxf6O7FrvtdjvXvY3qSR+TxhrF1ilT379YY/CntbUtUYfHEE5oGu+j3wEAAP//p5mma9gFAAA="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/monitoring/loki/loki-config.yml",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/2xRbbKbMAz871PoApkH5LWd8WU8xoigxh9UFulLT9+xDU0zwy/s3ZVXu9hNFoPRjh4nDbP1GZXKyA9krQAWkdV4yoLRrIlFw7XvOqVcCiHFolitLGZlnOlLw4dPd1IAWRLbGxYeYCaP+ZkFQ7sDuGWL92wmYnSS+LkPfjR8F/Hm8URTYQXAuHpyVihFM9si0dAXnOKt+dwfZQ08TNsFKAYMiZ9KZbdgsMalOFMdaafcBi4wcwoahm74vHT9pevf35E8jTuSxp/oxOzEK+4xUH00PPrrjlCc8OvYC+Bor8LmBSNTmjQMn0stfG0pFcDvxHeKt5MCD1VNU8+lH4qC/LBeQ9+F2p1grMy/Py+84RszoUfB8rFPDcNyRpY9kI1LWxQN/bdOAewU468N81kpylMgyf/1/nr3iPxj6IohxRvmSrAVNGHU0H9/w8eNiwn9aex1UH8DAAD//4xY3GDRAgAA"
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/monitoring/alloy/config.alloy",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/5STTWvbQBCG7/oVg052sCW7H1ACoaR1PwKFiqYhh6aEtXZkTbzZWXZWVkLk/160UhKX9tCigzTamfd9ZoY1vNmQ3cBDAmBwhwZOICVbcZrskyTPYT6HS08BAa12TDbAxHCpDHzhLcGOFBSsb5UFi6Flv53CfJ4Y3lLWxrJUY6UaE9Jo8STSBwCNj351CO44z/uq45fLxSJ+5cpRvlvmrpE6TQD2z0AXlj4SyL0Y3oDHEmmH/slXuPElZuNx2liqaHA3JAEt+tFdae1RBHqERRaf49fLV2k8dJ4Dlxz5Gu2Gn0at0Qj0FQ9ww+t4OOjvIyJAxb5VXl8HhhP4EYGc5xJFsph5XZEJ6LNH7J/Pba08O7BMgjPYIjoQLBtP4X7u0eBO2QCGN/LU6Kg7IozCQ6d/oYjryMZtHNgnAHk+eJ8WoES4JBWIba5JDsKBLAGQoDaY6b5gmCPeuX6Ofc4JpJO3NJ3ULEE53REiwpvFi6urbLnsHtVQdwfafYSqCTXaQGWML4vT60/fvl4U02HzB4wt9cMQgbJW1qLJHbfoQembRsIt2iD/iDjWd/1bHJadV1r5TlfShbso+qe5tBTKGhz7AJVR7r9mcv696N4Vq4vOkN1mR5PGdZpbO82Oer3fzD7s0N+Hur+YaATBKREUCLXnZlND4Hj7htxJRR5bZQysDZdbmcHZ6jw/K85nsPr8vpiB0rdkZ+BxzRxkmuyTXwEAAP//RW+efPUDAAA="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/monitoring/pve-exporter/pve.yml",
+        "contents": {
+          "compression": "",
+          "source": "data:,default%3A%0A%20%20user%3A%20monitoring%40pve%0A%20%20token_name%3A%20monitoring%0A%20%20token_value%3A%205c6b5e6c-4d39-42b2-9ea2-1f7cb4dc474b%0A%20%20verify_ssl%3A%20false%0A"
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/monitoring/alertmanager/alertmanager.yml",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/yrKLy1JteJSUChKTU7NLEstslJQT0lNSyzNKVHnUlBIL8ovLYgvT8wssVIwNiiGi2TmlaQWlSXmWCmY5oI1F6QmliCJmmRwccFMLAYZr6uQl5ibimw4IAAA//9rvKcLegAAAA=="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/monitoring/grafana/provisioning/datasources/datasources.yml",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/3yNsQrCMBRF93zF/QFpilPf7Ojg5P6ITxpMm5D3AvbvxYBYF8d77oHDJV6laswrYXQ3NtbcahAlBxyw8iKES82L2CxNHQDYVoRQfiGHIKodP7dOWk2E2azQMHxlmvzk+x/1JHduyQhWm+x65/yIu1L6zP+Nt0bH0Xv3CgAA//9A24XU1QAAAA=="
+        },
+        "mode": 420
+      },
+      {
+        "path": "/etc/monitoring/grafana/provisioning/dashboards/dashboards.yml",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/1SOsa7DIAxFd77CW6Yn9FbWdukPdHdik1iiGNmkUv++gkz1dn2PdA82ebK5aE3wH5rpW4jNUwD4g4ovTrBsWtT99CUAAKjtDxrwCFkLsSVYbj9M/zROkKXwjCSOa+E7F+5zKWPxq2KSProE3c7rpW1AU2Fcw34kiNy3uBtmrBin5nCWukdCP1ZFIw/fAAAA///gorkizQAAAA=="
+        },
+        "mode": 420
+      }
+    ]
+  }
+}

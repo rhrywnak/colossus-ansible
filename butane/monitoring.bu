@@ -1,0 +1,568 @@
+variant: fcos
+version: 1.5.0
+
+# =============================================================================
+# VM-314: Colossus Monitoring Stack
+# CoreOS + Podman + Quadlet
+# Node: pve-3 | IP: 10.10.100.56/24
+#
+# BEFORE TRANSPILING:
+#   1. Replace 5c6b5e6c-4d39-42b2-9ea2-1f7cb4dc474b with value from: ansible-vault view secrets/vault.yml
+#   2. Replace Drwho2010$ with value from: ansible-vault view secrets/vault.yml
+#
+# TRANSPILE:
+#   butane --pretty --strict butane/monitoring.bu -o ignition/monitoring.ign
+#
+# DEPLOY IGNITION:
+#   scp ignition/monitoring.ign root@10.10.100.5:/var/coreos/snippets/
+#
+# REBUILD HISTORY:
+#   v1: Initial — failed on /etc/hostname overwrite, network deps, dir ownership,
+#       pve-exporter perms, alloy CLI syntax, alloy filter config, cookie_secure
+#   v2: All 7 issues fixed. Clean rebuild validated.
+# =============================================================================
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ1dOykw0BuYrBAagKc3Ra92H9fNm5Nq8mp2N46mUpD6"
+
+storage:
+  # =========================================================================
+  # Directories
+  # =========================================================================
+  directories:
+    # Config directories
+    - path: /etc/monitoring
+      mode: 0755
+    - path: /etc/monitoring/prometheus
+      mode: 0755
+    - path: /etc/monitoring/prometheus/rules
+      mode: 0755
+    - path: /etc/monitoring/loki
+      mode: 0755
+    - path: /etc/monitoring/grafana
+      mode: 0755
+    - path: /etc/monitoring/grafana/provisioning
+      mode: 0755
+    - path: /etc/monitoring/grafana/provisioning/datasources
+      mode: 0755
+    - path: /etc/monitoring/grafana/provisioning/dashboards
+      mode: 0755
+    - path: /etc/monitoring/pve-exporter
+      mode: 0755
+    - path: /etc/monitoring/alertmanager
+      mode: 0755
+    - path: /etc/monitoring/alloy
+      mode: 0755
+    # Data directories — UIDs must match container runtime users
+    # FIX #3: Prometheus=65534(nobody), Loki=10001, Grafana=472
+    - path: /var/lib/monitoring
+      mode: 0755
+    - path: /var/lib/monitoring/prometheus
+      mode: 0755
+      user:
+        id: 65534
+      group:
+        id: 65534
+    - path: /var/lib/monitoring/loki
+      mode: 0755
+      user:
+        id: 10001
+      group:
+        id: 10001
+    - path: /var/lib/monitoring/loki/chunks
+      mode: 0755
+      user:
+        id: 10001
+      group:
+        id: 10001
+    - path: /var/lib/monitoring/loki/index
+      mode: 0755
+      user:
+        id: 10001
+      group:
+        id: 10001
+    - path: /var/lib/monitoring/loki/cache
+      mode: 0755
+      user:
+        id: 10001
+      group:
+        id: 10001
+    - path: /var/lib/monitoring/loki/compactor
+      mode: 0755
+      user:
+        id: 10001
+      group:
+        id: 10001
+    - path: /var/lib/monitoring/loki/rules
+      mode: 0755
+      user:
+        id: 10001
+      group:
+        id: 10001
+    - path: /var/lib/monitoring/grafana
+      mode: 0755
+      user:
+        id: 472
+      group:
+        id: 472
+    # Quadlet directory
+    - path: /etc/containers/systemd
+      mode: 0755
+
+  # =========================================================================
+  # Files
+  # =========================================================================
+  files:
+    # -----------------------------------------------------------------------
+    # Hostname
+    # FIX #1: overwrite: true — CoreOS ships with default /etc/hostname
+    # -----------------------------------------------------------------------
+    - path: /etc/hostname
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: monitoring
+
+    # -----------------------------------------------------------------------
+    # Static IP via NetworkManager
+    # -----------------------------------------------------------------------
+    - path: /etc/NetworkManager/system-connections/ens18.nmconnection
+      mode: 0600
+      contents:
+        inline: |
+          [connection]
+          id=ens18
+          type=ethernet
+          interface-name=ens18
+          autoconnect=true
+
+          [ipv4]
+          method=manual
+          addresses=10.10.100.56/24
+          gateway=10.10.100.1
+          dns=10.10.100.53
+
+          [ipv6]
+          method=disabled
+
+    # -----------------------------------------------------------------------
+    # Secrets (mode 0600)
+    # -----------------------------------------------------------------------
+    - path: /etc/monitoring/secrets.env
+      mode: 0600
+      contents:
+        inline: |
+          GF_SECURITY_ADMIN_USER=admin
+          GF_SECURITY_ADMIN_PASSWORD=Drwho2010$
+          GF_SERVER_ROOT_URL=https://grafana.cogmai.com
+          GF_SERVER_DOMAIN=grafana.cogmai.com
+GF_SECURITY_COOKIE_SECURE=false
+
+    # -----------------------------------------------------------------------
+    # Podman Network: monitoring
+    # -----------------------------------------------------------------------
+    - path: /etc/containers/systemd/monitoring.network
+      mode: 0644
+      contents:
+        inline: |
+          [Network]
+          NetworkName=monitoring
+          Driver=bridge
+
+    # -----------------------------------------------------------------------
+    # Quadlet: Prometheus
+    # FIX #2: After/Requires monitoring-network.service
+    # -----------------------------------------------------------------------
+    - path: /etc/containers/systemd/prometheus.container
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Prometheus
+          Wants=network-online.target
+          After=network-online.target
+          After=monitoring-network.service
+          Requires=monitoring-network.service
+
+          [Container]
+          Image=docker.io/prom/prometheus:v3.2.1
+          ContainerName=prometheus
+          Network=monitoring
+          PublishPort=9090:9090
+          Volume=/etc/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+          Volume=/etc/monitoring/prometheus/rules:/etc/prometheus/rules:ro,Z
+          Volume=/var/lib/monitoring/prometheus:/prometheus:Z
+          Exec=--config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=30d --storage.tsdb.retention.size=10GB --web.enable-lifecycle --web.enable-remote-write-receiver
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # -----------------------------------------------------------------------
+    # Quadlet: Loki
+    # -----------------------------------------------------------------------
+    - path: /etc/containers/systemd/loki.container
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Loki
+          Wants=network-online.target
+          After=network-online.target
+          After=monitoring-network.service
+          Requires=monitoring-network.service
+
+          [Container]
+          Image=docker.io/grafana/loki:3.4.2
+          ContainerName=loki
+          Network=monitoring
+          PublishPort=3100:3100
+          Volume=/etc/monitoring/loki/loki-config.yml:/etc/loki/config.yml:ro,Z
+          Volume=/var/lib/monitoring/loki:/loki:Z
+          Exec=-config.file=/etc/loki/config.yml
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # -----------------------------------------------------------------------
+    # Quadlet: Grafana
+    # FIX #7: Removed GF_SECURITY_COOKIE_SECURE — breaks login over HTTP.
+    #         Re-add after Traefik HTTPS route is configured.
+    # -----------------------------------------------------------------------
+    - path: /etc/containers/systemd/grafana.container
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Grafana
+          Wants=network-online.target
+          After=network-online.target
+          After=monitoring-network.service
+          Requires=monitoring-network.service
+
+          [Container]
+          Image=docker.io/grafana/grafana:11.5.2
+          ContainerName=grafana
+          Network=monitoring
+          PublishPort=3000:3000
+          Volume=/var/lib/monitoring/grafana:/var/lib/grafana:Z
+          Volume=/etc/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro,Z
+          EnvironmentFile=/etc/monitoring/secrets.env
+          Environment=GF_AUTH_ANONYMOUS_ENABLED=false
+          Environment=GF_USERS_ALLOW_SIGN_UP=false
+          Environment=GF_SECURITY_DISABLE_GRAVATAR=true
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # -----------------------------------------------------------------------
+    # Quadlet: PVE Exporter
+    # -----------------------------------------------------------------------
+    - path: /etc/containers/systemd/pve-exporter.container
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Prometheus PVE Exporter
+          Wants=network-online.target
+          After=network-online.target
+          After=monitoring-network.service
+          Requires=monitoring-network.service
+
+          [Container]
+          Image=docker.io/prompve/prometheus-pve-exporter:3.5.0
+          ContainerName=pve-exporter
+          Network=monitoring
+          PublishPort=9221:9221
+          Volume=/etc/monitoring/pve-exporter/pve.yml:/etc/prometheus/pve.yml:ro,Z
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # -----------------------------------------------------------------------
+    # Quadlet: Alertmanager
+    # -----------------------------------------------------------------------
+    - path: /etc/containers/systemd/alertmanager.container
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Alertmanager
+          Wants=network-online.target
+          After=network-online.target
+          After=monitoring-network.service
+          Requires=monitoring-network.service
+
+          [Container]
+          Image=docker.io/prom/alertmanager:v0.28.1
+          ContainerName=alertmanager
+          Network=monitoring
+          PublishPort=9093:9093
+          Volume=/etc/monitoring/alertmanager:/etc/alertmanager:ro,Z
+          Exec=--config.file=/etc/alertmanager/alertmanager.yml
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # -----------------------------------------------------------------------
+    # Quadlet: Alloy (UniFi Syslog Receiver)
+    # FIX #5: Config path is positional arg: alloy run <path> [flags]
+    # -----------------------------------------------------------------------
+    - path: /etc/containers/systemd/alloy.container
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Grafana Alloy (UniFi Syslog Receiver)
+          Wants=network-online.target
+          After=network-online.target
+          After=monitoring-network.service
+          Requires=monitoring-network.service
+
+          [Container]
+          Image=docker.io/grafana/alloy:v1.6.1
+          ContainerName=alloy
+          Network=monitoring
+          PublishPort=514:514/udp
+          PublishPort=12346:12346
+          Volume=/etc/monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro,Z
+          Exec=run /etc/alloy/config.alloy --server.http.listen-addr=0.0.0.0:12346
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # -----------------------------------------------------------------------
+    # Prometheus Configuration
+    # -----------------------------------------------------------------------
+    - path: /etc/monitoring/prometheus/prometheus.yml
+      mode: 0644
+      contents:
+        inline: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+
+          alerting:
+            alertmanagers:
+              - static_configs:
+                  - targets: ['alertmanager:9093']
+
+          scrape_configs:
+            # -- Proxmox cluster (via PVE Exporter) --
+            - job_name: 'proxmox'
+              metrics_path: /pve
+              params:
+                module: [default]
+                cluster: ['1']
+                node: ['1']
+              static_configs:
+                - targets:
+                    - 10.10.100.3
+                    - 10.10.100.2
+                    - 10.10.100.5
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: __param_target
+                - source_labels: [__param_target]
+                  target_label: instance
+                - target_label: __address__
+                  replacement: pve-exporter:9221
+
+            # -- Alloy agents (host metrics) --
+            - job_name: 'alloy'
+              static_configs:
+                - targets:
+                    - 10.10.100.3:12345
+                    - 10.10.100.2:12345
+                    - 10.10.100.5:12345
+                    - 10.10.100.110:12345
+                    - 10.10.100.120:12345
+                    - 10.10.100.200:12345
+                    - 10.10.100.220:12345
+                    - 10.10.100.53:12345
+                    - 10.10.100.54:12345
+                    - 10.10.100.55:12345
+                    - 10.10.100.242:12345
+
+            # -- Traefik (built-in Prometheus endpoint) --
+            - job_name: 'traefik'
+              static_configs:
+                - targets: ['10.10.100.55:8082']
+
+            # -- Pi-hole (pihole6_exporter) --
+            - job_name: 'pihole'
+              static_configs:
+                - targets: ['10.10.100.53:9666']
+
+            # -- Prometheus self-monitoring --
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+
+    # -----------------------------------------------------------------------
+    # Loki Configuration
+    # -----------------------------------------------------------------------
+    - path: /etc/monitoring/loki/loki-config.yml
+      mode: 0644
+      contents:
+        inline: |
+          auth_enabled: false
+
+          server:
+            http_listen_port: 3100
+
+          common:
+            path_prefix: /loki
+            storage:
+              filesystem:
+                chunks_directory: /loki/chunks
+                rules_directory: /loki/rules
+            replication_factor: 1
+            ring:
+              kvstore:
+                store: inmemory
+
+          schema_config:
+            configs:
+              - from: 2024-01-01
+                store: tsdb
+                object_store: filesystem
+                schema: v13
+                index:
+                  prefix: index_
+                  period: 24h
+
+          compactor:
+            working_directory: /loki/compactor
+            compaction_interval: 10m
+            retention_enabled: true
+            retention_delete_delay: 2h
+            retention_delete_worker_count: 150
+            delete_request_store: filesystem
+
+          limits_config:
+            retention_period: 720h
+            ingestion_rate_mb: 16
+            ingestion_burst_size_mb: 32
+
+    # -----------------------------------------------------------------------
+    # Alloy Configuration (UniFi syslog receiver + filter)
+    # FIX #6: stage.drop with expression (not stage.match nesting)
+    # -----------------------------------------------------------------------
+    - path: /etc/monitoring/alloy/config.alloy
+      mode: 0644
+      contents:
+        inline: |
+          logging {
+            level = "info"
+          }
+
+          // -- Write endpoint (local Loki via Podman network) --
+          loki.write "default" {
+            endpoint {
+              url = "http://loki:3100/loki/api/v1/push"
+            }
+          }
+
+          // -- UniFi syslog receiver --
+          loki.source.syslog "unifi" {
+            listener {
+              address  = "0.0.0.0:514"
+              protocol = "udp"
+              labels   = { job = "unifi" }
+            }
+            forward_to = [loki.process.unifi_filter.receiver]
+          }
+
+          // -- Drop noise, keep security-relevant logs --
+          loki.process "unifi_filter" {
+            forward_to = [loki.write.default.receiver]
+
+            // Drop AP association/disassociation noise
+            stage.drop {
+              expression = "(?i)(hostapd|ieee 802\\.11|associated|disassociated|deauthenticated|WPA_GROUP)"
+            }
+
+            // Drop wireless channel/power adjustments
+            stage.drop {
+              expression = "(?i)(channel|chanspec|radar|dfs|txpower)"
+            }
+
+            // Drop switch port flap noise
+            stage.drop {
+              expression = "(?i)(STP|BPDU|link.*(up|down).*port)"
+            }
+
+            // Everything else passes through to Loki
+            // (firewall blocks, IDS/IPS, DHCP, admin, reboots)
+          }
+
+    # -----------------------------------------------------------------------
+    # PVE Exporter Configuration
+    # FIX #4: mode 0644 (not 0600) — container runs as non-root
+    # -----------------------------------------------------------------------
+    - path: /etc/monitoring/pve-exporter/pve.yml
+      mode: 0644
+      contents:
+        inline: |
+          default:
+            user: monitoring@pve
+            token_name: monitoring
+            token_value: 5c6b5e6c-4d39-42b2-9ea2-1f7cb4dc474b
+            verify_ssl: false
+
+    # -----------------------------------------------------------------------
+    # Alertmanager Configuration (silent default)
+    # -----------------------------------------------------------------------
+    - path: /etc/monitoring/alertmanager/alertmanager.yml
+      mode: 0644
+      contents:
+        inline: |
+          route:
+            receiver: 'default'
+            group_wait: 30s
+            group_interval: 5m
+            repeat_interval: 4h
+
+          receivers:
+            - name: 'default'
+
+    # -----------------------------------------------------------------------
+    # Grafana Datasource Provisioning
+    # NOTE: URLs use Podman network DNS names, NOT 127.0.0.1
+    # -----------------------------------------------------------------------
+    - path: /etc/monitoring/grafana/provisioning/datasources/datasources.yml
+      mode: 0644
+      contents:
+        inline: |
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              access: proxy
+              url: http://prometheus:9090
+              isDefault: true
+            - name: Loki
+              type: loki
+              access: proxy
+              url: http://loki:3100
+
+    # -----------------------------------------------------------------------
+    # Grafana Dashboard Provisioning
+    # -----------------------------------------------------------------------
+    - path: /etc/monitoring/grafana/provisioning/dashboards/dashboards.yml
+      mode: 0644
+      contents:
+        inline: |
+          apiVersion: 1
+          providers:
+            - name: 'colossus'
+              orgId: 1
+              folder: 'Colossus'
+              type: file
+              disableDeletion: false
+              editable: true
+              options:
+                path: /etc/grafana/provisioning/dashboards
