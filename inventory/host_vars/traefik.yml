@@ -42,3 +42,9 @@ traefik_routes:
     host: "traefik.{{ domain }}"
     service: "api@internal"
     external: false
+
+  # ── Monitoring ───────────────────────────────────────────
+  - name: grafana
+    host: "grafana.{{ domain }}"
+    backend_url: "http://10.10.100.56:3000"
+    external: false

@@ -49,7 +49,7 @@
   ansible.builtin.uri:
     url: "{{ pihole_api_base }}/{{ item | regex_replace(' ', '%20') }}"
     method: PUT
-    status_code: [200]
+    status_code: [200, 201]
   loop: "{{ records_to_add }}"
   loop_control:
     label: "{{ item }}"

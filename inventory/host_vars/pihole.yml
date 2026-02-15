@@ -29,3 +29,7 @@ pihole_dns_records:
 
   # ── Infrastructure ────────────────────────────────────────
   - "10.10.100.53 pihole.cogmai.com pihole"
+
+  # ── Monitoring ────────────────────────────────────────────
+  - "10.10.100.55 grafana.cogmai.com grafana"
+  - "10.10.100.56 monitoring.cogmai.com monitoring"

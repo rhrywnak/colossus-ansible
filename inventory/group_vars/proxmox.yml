@@ -39,3 +39,7 @@ pbs_backup_jobs:
   - name: backup-traefik
     vmid: 313
     notes: "Traefik scheduled backup"
+  
+  - name: backup-monitoring
+    vmid: 314
+    notes: "Monitoring stack scheduled backup"
