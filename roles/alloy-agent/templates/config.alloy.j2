@@ -25,6 +25,36 @@ prometheus.exporter.unix "host" {
 prometheus.exporter.unix "host" { }
 {% endif %}
 
+/// ─── Metrics: scrape and push to Prometheus ──────────────────────
+//
+// The unix exporter above creates targets, but they need to be scraped
+// and forwarded. This local scrape reads the unix exporter metrics and
+// pushes them to central Prometheus via remote_write.
+//
+// The relabel step ensures the instance label shows the real hostname,
+// not the container ID (which is what Podman containers report).
+//
+prometheus.scrape "node" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.relabel.node.receiver]
+  scrape_interval = "15s"
+  job_name        = "node"
+}
+
+prometheus.relabel "node" {
+  forward_to = [prometheus.remote_write.prom.receiver]
+  rule {
+    target_label = "instance"
+    replacement  = "{{ inventory_hostname }}"
+  }
+}
+
+prometheus.remote_write "prom" {
+  endpoint {
+    url = "http://10.10.100.56:9090/api/v1/write"
+  }
+}
+
 // ─── Logs: ship journald entries to Loki ─────────────────────────
 //
 // loki.source.journal reads from systemd's journal. The max_age setting

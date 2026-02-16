@@ -1,0 +1,6 @@
+---
+- name: Restart pihole6-exporter
+  ansible.builtin.systemd:
+    name: pihole6-exporter
+    state: restarted
+    daemon_reload: true

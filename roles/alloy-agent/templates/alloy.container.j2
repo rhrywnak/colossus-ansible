@@ -10,6 +10,7 @@ Wants=network-online.target
 [Container]
 Image={{ alloy_image }}
 ContainerName=alloy
+HostName={{ inventory_hostname }}
 
 # Run as root inside the container — required for reading /var/log/journal
 # (owned by root:systemd-journal on the host). The container already has

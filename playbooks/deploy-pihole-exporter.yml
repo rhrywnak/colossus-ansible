@@ -1,0 +1,8 @@
+---
+# playbooks/deploy-pihole-exporter.yml
+# Deploys pihole6_exporter to Pi-hole hosts
+- name: Deploy pihole6_exporter
+  hosts: pihole
+  become: true
+  roles:
+    - pihole-exporter

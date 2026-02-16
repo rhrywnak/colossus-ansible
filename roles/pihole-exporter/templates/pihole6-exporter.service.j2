@@ -1,0 +1,14 @@
+[Unit]
+Description=Prometheus Exporter for Pi-hole v6
+After=network.target pihole-FTL.service
+Wants=pihole-FTL.service
+
+[Service]
+Type=simple
+User={{ pihole_exporter_user }}
+ExecStart={{ pihole_exporter_bin }} -H {{ pihole_exporter_host }} -p {{ pihole_exporter_port }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

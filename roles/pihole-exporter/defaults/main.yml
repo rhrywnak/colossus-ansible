@@ -1,0 +1,8 @@
+---
+# Default variables for pihole6_exporter
+pihole_exporter_host: "localhost"
+pihole_exporter_port: 9666
+pihole_exporter_repo_url: "https://raw.githubusercontent.com/bazmonk/pihole6_exporter/main/pihole6_exporter"
+pihole_exporter_bin: "/usr/local/bin/pihole6_exporter"
+pihole_exporter_user: "pihole-exporter"
+pihole_exporter_group: "pihole-exporter"
