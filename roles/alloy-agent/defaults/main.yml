@@ -1,0 +1,17 @@
+---
+# roles/alloy-agent/defaults/main.yml
+# Default variables for alloy-agent role
+
+# Central monitoring endpoints (VM-314)
+alloy_loki_url: "http://10.10.100.56:3100/loki/api/v1/push"
+alloy_listen_port: 12345
+
+# Alloy container image (CoreOS only)
+alloy_image: "docker.io/grafana/alloy:v1.6.1"
+
+# Config file locations (differ by install method)
+alloy_config_dir_apt: "/etc/alloy"
+alloy_config_dir_podman: "/etc/alloy"
+
+# Log shipping
+alloy_journal_max_age: "24h"

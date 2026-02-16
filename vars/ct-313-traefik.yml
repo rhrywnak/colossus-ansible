@@ -6,5 +6,5 @@ ct_id: 313
 ct_hostname: traefik
 ct_ip: "10.10.100.55/24"
 ct_gateway: "10.10.100.1"
-ct_memory: 256
+ct_memory: 512
 ct_disk_size: 4

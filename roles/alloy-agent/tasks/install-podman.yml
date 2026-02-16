@@ -1,0 +1,88 @@
+---
+# roles/alloy-agent/tasks/install-podman.yml
+#
+# Deploys Grafana Alloy as a Podman container via Quadlet on CoreOS VMs:
+#   - VM-110 (PROD DB), VM-120 (PROD App)
+#   - VM-210 (DEV DB), VM-220 (DEV App)
+#
+# CoreOS is an immutable OS — we can't use APT/DNF to install packages.
+# Instead, we run Alloy as a container and use Quadlet for systemd
+# integration. Quadlet reads .container files from /etc/containers/systemd/
+# and auto-generates systemd units at daemon-reload time.
+
+# ─── Config Directory ────────────────────────────────────────────
+- name: Create Alloy config directory
+  ansible.builtin.file:
+    path: "{{ alloy_config_dir_podman }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+
+# ─── Template Config ─────────────────────────────────────────────
+- name: Template Alloy config
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_dir_podman }}/config.alloy"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Restart alloy (podman quadlet)
+
+# ─── Quadlet Unit ────────────────────────────────────────────────
+#
+# Quadlet .container files go in /etc/containers/systemd/ — this is on
+# the writable overlay in CoreOS, so Ansible can manage it even though
+# the base OS is immutable.
+#
+# After placing the file, systemctl daemon-reload detects it and
+# generates a systemd unit named alloy.service (derived from the
+# filename alloy.container).
+#
+- name: Deploy Alloy Quadlet unit
+  ansible.builtin.template:
+    src: alloy.container.j2
+    dest: /etc/containers/systemd/alloy.container
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Restart alloy (podman quadlet)
+
+# ─── Pull Image ──────────────────────────────────────────────────
+#
+# Pre-pull the image so the first systemd start doesn't timeout waiting
+# for a large image download. Podman pull is idempotent — if the image
+# is already cached, this is a no-op.
+#
+- name: Pull Alloy container image
+  ansible.builtin.command:
+    cmd: "podman pull {{ alloy_image }}"
+  become: true
+  changed_when: "'Copying' in pull_result.stderr"
+  register: pull_result
+
+# ─── Reload and Start ────────────────────────────────────────────
+- name: Reload systemd to detect Quadlet unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+
+- name: Enable and start Alloy service
+  ansible.builtin.systemd:
+    name: alloy
+    enabled: true
+    state: started
+  become: true
+
+# ─── Validate ────────────────────────────────────────────────────
+- name: Wait for Alloy container to be ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ alloy_listen_port }}/-/ready"
+    status_code: 200
+  register: alloy_ready
+  retries: 5
+  delay: 3
+  until: alloy_ready.status == 200

@@ -1,0 +1,16 @@
+---
+# roles/alloy-agent/handlers/main.yml
+
+- name: Restart alloy (systemd)
+  ansible.builtin.systemd:
+    name: alloy
+    state: restarted
+    daemon_reload: true
+  when: not (alloy_containerized | default(false))
+
+- name: Restart alloy (podman quadlet)
+  ansible.builtin.systemd:
+    name: alloy
+    state: restarted
+    daemon_reload: true
+  when: alloy_containerized | default(false)

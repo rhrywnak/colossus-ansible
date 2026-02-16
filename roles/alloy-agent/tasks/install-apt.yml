@@ -1,0 +1,89 @@
+---
+# roles/alloy-agent/tasks/install-apt.yml
+#
+# Installs Grafana Alloy via APT on Debian-based hosts:
+#   - Proxmox nodes (pve-1, pve-2, pve-3)
+#   - LXC containers (CT-311 Pi-hole, CT-312 cloudflared, CT-313 Traefik)
+#   - PBS (VM-900)
+
+# ─── Prerequisites ────────────────────────────────────────────────
+- name: Install GPG (needed for APT key dearmoring)
+  ansible.builtin.apt:
+    name: gpg
+    state: present
+    update_cache: true
+
+# ─── Grafana APT Repository ──────────────────────────────────────
+#
+# Grafana publishes all their tools (Grafana, Alloy, Loki, etc.) from
+# a single APT repo at apt.grafana.com. The GPG key verifies packages
+# haven't been tampered with. We use the modern signed-by approach
+# instead of the deprecated apt-key command.
+#
+- name: Download Grafana GPG key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /tmp/grafana-gpg.key
+    mode: '0644'
+
+- name: Dearmor GPG key to keyring
+  ansible.builtin.shell:
+    cmd: gpg --dearmor < /tmp/grafana-gpg.key > /usr/share/keyrings/grafana.gpg
+    creates: /usr/share/keyrings/grafana.gpg
+
+- name: Add Grafana APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+
+# ─── Install Alloy ───────────────────────────────────────────────
+- name: Install Grafana Alloy
+  ansible.builtin.apt:
+    name: alloy
+    state: present
+    update_cache: true
+
+# ─── Configure ───────────────────────────────────────────────────
+- name: Template Alloy config
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_dir_apt }}/config.alloy"
+    owner: root
+    group: alloy
+    mode: '0644'
+  notify: Restart alloy (systemd)
+
+# The Alloy APT package ships a systemd service that reads /etc/default/alloy.
+# By default it binds to 127.0.0.1:12345 — we need 0.0.0.0 so Prometheus
+# on VM-314 can scrape metrics remotely.
+- name: Configure Alloy environment (listen on all interfaces)
+  ansible.builtin.copy:
+    dest: /etc/default/alloy
+    content: |
+      # Managed by Ansible alloy-agent role — do not edit manually
+      CONFIG_FILE="{{ alloy_config_dir_apt }}/config.alloy"
+      CUSTOM_ARGS="--server.http.listen-addr=0.0.0.0:{{ alloy_listen_port }}"
+      RESTART_ON_UPGRADE=true
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart alloy (systemd)
+
+# ─── Enable and Start ────────────────────────────────────────────
+- name: Enable and start Alloy service
+  ansible.builtin.systemd:
+    name: alloy
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ─── Validate ────────────────────────────────────────────────────
+- name: Wait for Alloy to be ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ alloy_listen_port }}/-/ready"
+    status_code: 200
+  register: alloy_ready
+  retries: 5
+  delay: 3
+  until: alloy_ready.status == 200

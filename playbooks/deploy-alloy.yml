@@ -1,0 +1,48 @@
+---
+# playbooks/deploy-alloy.yml
+#
+# Phase 6A-2: Deploy Grafana Alloy agents to all managed hosts.
+#
+# Alloy agents serve two purposes:
+#   1. Expose host-level metrics (CPU, RAM, disk, network) for Prometheus to scrape
+#   2. Ship journald logs to the central Loki instance on VM-314
+#
+# Usage:
+#   # Deploy to all hosts (default)
+#   ansible-playbook playbooks/deploy-alloy.yml
+#
+#   # Deploy to a specific wave (by group)
+#   ansible-playbook playbooks/deploy-alloy.yml -l infrastructure
+#   ansible-playbook playbooks/deploy-alloy.yml -l proxmox
+#   ansible-playbook playbooks/deploy-alloy.yml -l coreos_vms
+#
+#   # Deploy to a single host (for testing)
+#   ansible-playbook playbooks/deploy-alloy.yml -l pihole
+#
+#   # Dry run
+#   ansible-playbook playbooks/deploy-alloy.yml --check --diff
+
+- name: Deploy Grafana Alloy agents
+  hosts: all:!truenas:!monitoring
+  serial: "{{ alloy_serial | default(0) }}"
+  gather_facts: true
+
+  pre_tasks:
+    - name: Display target host info
+      ansible.builtin.debug:
+        msg: >-
+          Deploying Alloy to {{ inventory_hostname }}
+          ({{ ansible_host }}) —
+          {{ 'CoreOS/Podman' if 'coreos_vms' in group_names else 'Debian/APT' }}
+
+  roles:
+    - alloy-agent
+
+  post_tasks:
+    - name: Verify Alloy metrics endpoint is reachable
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ alloy_listen_port | default(12345) }}/metrics"
+        status_code: 200
+        return_content: false
+      delegate_to: localhost
+      become: false

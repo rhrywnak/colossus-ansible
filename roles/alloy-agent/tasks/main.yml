@@ -1,0 +1,27 @@
+---
+# roles/alloy-agent/tasks/main.yml
+#
+# Routes to the correct install method based on inventory group:
+#   - coreos_vms group → Podman container (Quadlet)
+#   - everything else   → APT package (native systemd)
+#
+# The alloy_containerized variable controls:
+#   1. Which install tasks run
+#   2. Config template conditionals (host paths vs /host/* paths)
+#   3. Which restart handler fires
+
+- name: Determine install method
+  ansible.builtin.set_fact:
+    alloy_containerized: "{{ 'coreos_vms' in group_names }}"
+
+- name: Display install method
+  ansible.builtin.debug:
+    msg: "Alloy install method for {{ inventory_hostname }}: {{ 'Podman Quadlet' if alloy_containerized else 'APT package' }}"
+
+- name: Install Alloy via APT (Debian/Proxmox/LXC)
+  ansible.builtin.include_tasks: install-apt.yml
+  when: not alloy_containerized
+
+- name: Install Alloy via Podman Quadlet (CoreOS)
+  ansible.builtin.include_tasks: install-podman.yml
+  when: alloy_containerized
