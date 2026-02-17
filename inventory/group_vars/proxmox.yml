@@ -15,10 +15,6 @@ pbs_backup_jobs:
     notes: "PROD App scheduled backup"
 
   # ── DEV ────────────────────────────────────────────────────
-  - name: backup-dev-db-frozen
-    vmid: 200
-    notes: "DEV DB frozen ref scheduled backup"
-
   - name: backup-dev-db
     vmid: 210
     notes: "DEV DB scheduled backup"
