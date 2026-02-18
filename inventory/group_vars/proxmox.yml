@@ -39,3 +39,7 @@ pbs_backup_jobs:
   - name: backup-monitoring
     vmid: 314
     notes: "Monitoring stack scheduled backup"
+
+  - name: backup-semaphore
+    vmid: 315
+    notes: "Semaphore UI scheduled backup"
