@@ -55,3 +55,4 @@ pbs_ip: 10.10.100.242
 
 # ── Default SSH user (overridden per group) ──────────────────
 ansible_user: root
+ansible_python_interpreter: /usr/bin/python3
