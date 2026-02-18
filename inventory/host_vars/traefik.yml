@@ -43,6 +43,11 @@ traefik_routes:
     service: "api@internal"
     external: false
 
+  - name: semaphore
+    host: "semaphore.{{ domain }}"
+    backend_url: "http://10.10.100.57:3000"
+    external: false
+
   # ── Monitoring ───────────────────────────────────────────
   - name: grafana
     host: "grafana.{{ domain }}"
