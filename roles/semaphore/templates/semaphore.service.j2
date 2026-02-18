@@ -1,0 +1,27 @@
+[Unit]
+Description=Semaphore UI
+Documentation=https://docs.semaphoreui.com/
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/bin/semaphore
+ConditionPathExists={{ semaphore_config_dir }}/config.json
+
+[Service]
+User={{ semaphore_user }}
+Group={{ semaphore_group }}
+Restart=always
+RestartSec=10s
+
+# Python/Ansible virtual environment
+Environment="PATH={{ semaphore_venv_dir }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="ANSIBLE_HOST_KEY_CHECKING=false"
+
+# Auto-upgrade Ansible dependencies at startup
+ExecStartPre=/bin/bash -c "source {{ semaphore_venv_dir }}/bin/activate && pip install --quiet --upgrade -r {{ semaphore_home }}/requirements.txt"
+ExecStartPre=/bin/bash -c "source {{ semaphore_venv_dir }}/bin/activate && ansible-galaxy collection install --upgrade -r {{ semaphore_home }}/requirements.yml"
+
+ExecStart=/usr/bin/semaphore server --config {{ semaphore_config_dir }}/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+
+[Install]
+WantedBy=multi-user.target

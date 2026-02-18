@@ -1,0 +1,45 @@
+---
+# roles/semaphore/defaults/main.yml
+# Semaphore UI deployment configuration
+
+# Semaphore version (check https://github.com/semaphoreui/semaphore/releases)
+semaphore_version: "2.17.0"
+
+# Service user
+semaphore_user: semaphore
+semaphore_group: semaphore
+semaphore_home: /home/semaphore
+
+# Paths
+semaphore_config_dir: /etc/semaphore
+semaphore_data_dir: /var/lib/semaphore
+semaphore_venv_dir: "{{ semaphore_home }}/venv"
+
+# Network
+semaphore_port: 3000
+semaphore_web_host: "https://semaphore.cogmai.com"
+
+# Database (SQLite initially — migrate to PostgreSQL later if needed)
+semaphore_db_dialect: "sqlite"
+semaphore_db_path: "{{ semaphore_data_dir }}/database.sqlite3"
+
+# Ansible settings
+semaphore_max_parallel_tasks: 2
+
+# Admin user (password from vault)
+semaphore_admin_login: admin
+semaphore_admin_name: Admin
+semaphore_admin_email: admin@cogmai.com
+# semaphore_admin_password: set in vault
+
+# Python packages for Ansible
+semaphore_python_packages:
+  - ansible
+  - netaddr
+  - jmespath
+
+# Ansible Galaxy collections
+semaphore_galaxy_collections:
+  - community.general
+  - community.proxmox
+  - ansible.posix

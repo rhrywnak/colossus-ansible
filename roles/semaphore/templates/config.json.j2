@@ -1,0 +1,16 @@
+{
+  "bolt": {
+    "host": "{{ semaphore_db_path }}"
+  },
+  "dialect": "{{ semaphore_db_dialect }}",
+  "port": "",
+  "interface": "",
+  "tmp_path": "{{ semaphore_data_dir }}/tmp",
+  "cookie_hash": "{{ gen_cookie_hash.stdout }}",
+  "cookie_encryption": "{{ gen_cookie_encryption.stdout }}",
+  "access_key_encryption": "{{ gen_access_key_encryption.stdout }}",
+  "email_sender": "",
+  "web_host": "{{ semaphore_web_host }}",
+  "max_parallel_tasks": {{ semaphore_max_parallel_tasks }},
+  "git_client": "cmd_git"
+}

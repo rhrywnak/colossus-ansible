@@ -1,0 +1,22 @@
+---
+# playbooks/deploy-semaphore.yml
+#
+# Deploys Semaphore UI to CT-315 (infrastructure LXC on pve-3)
+#
+# Prerequisites:
+#   - CT-315 created and running (10.10.100.57)
+#   - SSH key deployed to root@10.10.100.57
+#   - semaphore_admin_password set in secrets/vault.yml
+#
+# Usage:
+#   ansible-playbook playbooks/deploy-semaphore.yml
+#
+# Idempotent: safe to re-run at any time.
+
+- name: Deploy Semaphore UI
+  hosts: semaphore
+  become: true
+  vars_files:
+    - ../secrets/vault.yml
+  roles:
+    - semaphore

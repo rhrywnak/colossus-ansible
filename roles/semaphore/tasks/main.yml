@@ -1,0 +1,274 @@
+---
+# roles/semaphore/tasks/main.yml
+#
+# Deploys Semaphore UI as a native binary on Debian 12 minimal LXC.
+#
+# Environment assumptions:
+#   - Debian 12 minimal (no sudo, no extra packages)
+#   - Ansible connects as root (per infrastructure group_vars)
+#   - Service user tasks use become_method: su (no sudo needed)
+#   - Internet access available (GitHub downloads, pip, Galaxy)
+#
+# Idempotent: safe to re-run. Config is only written on first deploy.
+
+# --- System Packages ---
+
+- name: Install prerequisite packages
+  ansible.builtin.apt:
+    name:
+      - git
+      - python3
+      - python3-pip
+      - python3-venv
+      - curl
+      - wget
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# --- Service User ---
+
+- name: Create semaphore group
+  ansible.builtin.group:
+    name: "{{ semaphore_group }}"
+    system: true
+
+- name: Create semaphore service user
+  ansible.builtin.user:
+    name: "{{ semaphore_user }}"
+    group: "{{ semaphore_group }}"
+    home: "{{ semaphore_home }}"
+    shell: /bin/bash
+    system: true
+    create_home: true
+
+# --- Directories ---
+
+- name: Create data and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ semaphore_user }}"
+    group: "{{ semaphore_group }}"
+    mode: "0755"
+  loop:
+    - "{{ semaphore_config_dir }}"
+    - "{{ semaphore_data_dir }}"
+    - "{{ semaphore_data_dir }}/tmp"
+
+# --- Python Virtual Environment & Ansible ---
+# All venv tasks run as the semaphore user via su (not sudo)
+
+- name: Create Python virtual environment
+  ansible.builtin.command:
+    cmd: "python3 -m venv {{ semaphore_venv_dir }}"
+    creates: "{{ semaphore_venv_dir }}/bin/activate"
+  become: true
+  become_user: "{{ semaphore_user }}"
+  become_method: su
+
+- name: Install Python packages in venv
+  ansible.builtin.pip:
+    name: "{{ semaphore_python_packages }}"
+    virtualenv: "{{ semaphore_venv_dir }}"
+    state: present
+  become: true
+  become_user: "{{ semaphore_user }}"
+  become_method: su
+
+- name: Create requirements.txt
+  ansible.builtin.copy:
+    content: "{{ semaphore_python_packages | join('\n') }}\n"
+    dest: "{{ semaphore_home }}/requirements.txt"
+    owner: "{{ semaphore_user }}"
+    group: "{{ semaphore_group }}"
+    mode: "0644"
+
+- name: Create requirements.yml for Ansible Galaxy
+  ansible.builtin.copy:
+    content: |
+      collections:
+      {% for collection in semaphore_galaxy_collections %}
+        - name: {{ collection }}
+      {% endfor %}
+    dest: "{{ semaphore_home }}/requirements.yml"
+    owner: "{{ semaphore_user }}"
+    group: "{{ semaphore_group }}"
+    mode: "0644"
+
+- name: Install Ansible Galaxy collections
+  ansible.builtin.command:
+    cmd: "{{ semaphore_venv_dir }}/bin/ansible-galaxy collection install {{ item }}"
+  loop: "{{ semaphore_galaxy_collections }}"
+  become: true
+  become_user: "{{ semaphore_user }}"
+  become_method: su
+  register: galaxy_install
+  changed_when: "'was installed' in galaxy_install.stdout"
+
+# --- Semaphore Binary ---
+
+- name: Check if Semaphore is already installed
+  ansible.builtin.command:
+    cmd: semaphore version
+  register: semaphore_installed
+  failed_when: false
+  changed_when: false
+
+- name: Determine if install/upgrade needed
+  ansible.builtin.set_fact:
+    semaphore_needs_install: >-
+      {{ semaphore_installed.rc != 0 or
+         semaphore_version not in (semaphore_installed.stdout | default('')) }}
+
+- name: Download Semaphore .deb package
+  ansible.builtin.get_url:
+    url: "https://github.com/semaphoreui/semaphore/releases/download/v{{ semaphore_version }}/semaphore_{{ semaphore_version }}_linux_amd64.deb"
+    dest: "/tmp/semaphore_{{ semaphore_version }}_linux_amd64.deb"
+    mode: "0644"
+  when: semaphore_needs_install
+
+- name: Install Semaphore .deb package
+  ansible.builtin.apt:
+    deb: "/tmp/semaphore_{{ semaphore_version }}_linux_amd64.deb"
+    state: present
+  when: semaphore_needs_install
+  notify: Restart semaphore
+
+- name: Clean up .deb package
+  ansible.builtin.file:
+    path: "/tmp/semaphore_{{ semaphore_version }}_linux_amd64.deb"
+    state: absent
+
+- name: Verify Semaphore binary
+  ansible.builtin.command:
+    cmd: semaphore version
+  register: semaphore_version_check
+  changed_when: false
+
+- name: Display Semaphore version
+  ansible.builtin.debug:
+    msg: "Semaphore version: {{ semaphore_version_check.stdout }}"
+
+# --- Configuration ---
+# config.json contains generated secrets — only created on first deploy.
+# Subsequent runs preserve existing config (secrets are not regenerable).
+
+- name: Check if config.json already exists
+  ansible.builtin.stat:
+    path: "{{ semaphore_config_dir }}/config.json"
+  register: config_exists
+
+- name: Generate cookie_hash secret
+  ansible.builtin.shell:
+    cmd: "head -c 32 /dev/urandom | base64"
+  register: gen_cookie_hash
+  changed_when: false
+  when: not config_exists.stat.exists
+
+- name: Generate cookie_encryption secret
+  ansible.builtin.shell:
+    cmd: "head -c 32 /dev/urandom | base64"
+  register: gen_cookie_encryption
+  changed_when: false
+  when: not config_exists.stat.exists
+
+- name: Generate access_key_encryption secret
+  ansible.builtin.shell:
+    cmd: "head -c 32 /dev/urandom | base64"
+  register: gen_access_key_encryption
+  changed_when: false
+  when: not config_exists.stat.exists
+
+- name: Deploy config.json (first deploy only)
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ semaphore_config_dir }}/config.json"
+    owner: "{{ semaphore_user }}"
+    group: "{{ semaphore_group }}"
+    mode: "0600"
+  when: not config_exists.stat.exists
+  notify: Restart semaphore
+
+- name: Ensure config.json permissions
+  ansible.builtin.file:
+    path: "{{ semaphore_config_dir }}/config.json"
+    owner: "{{ semaphore_user }}"
+    group: "{{ semaphore_group }}"
+    mode: "0600"
+
+# --- Database Migration ---
+
+- name: Run Semaphore database migration
+  ansible.builtin.command:
+    cmd: "semaphore migrate --config {{ semaphore_config_dir }}/config.json"
+  become: true
+  become_user: "{{ semaphore_user }}"
+  become_method: su
+  register: migrate_result
+  changed_when: "'Executing migration' in migrate_result.stdout"
+
+# --- Admin User ---
+
+- name: Check if admin user already exists
+  ansible.builtin.command:
+    cmd: "semaphore user list --config {{ semaphore_config_dir }}/config.json"
+  become: true
+  become_user: "{{ semaphore_user }}"
+  become_method: su
+  register: user_list
+  changed_when: false
+  failed_when: false
+
+- name: Create admin user (first deploy only)
+  ansible.builtin.command:
+    cmd: >
+      semaphore user add
+      --config {{ semaphore_config_dir }}/config.json
+      --admin
+      --login {{ semaphore_admin_login }}
+      --name "{{ semaphore_admin_name }}"
+      --email {{ semaphore_admin_email }}
+      --password {{ semaphore_admin_password }}
+  become: true
+  become_user: "{{ semaphore_user }}"
+  become_method: su
+  when: semaphore_admin_login not in (user_list.stdout | default(''))
+  no_log: true
+
+# --- systemd Service ---
+
+- name: Deploy systemd service unit
+  ansible.builtin.template:
+    src: semaphore.service.j2
+    dest: /etc/systemd/system/semaphore.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart semaphore
+
+- name: Enable and start Semaphore
+  ansible.builtin.systemd:
+    name: semaphore
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# --- Validation ---
+
+- name: Wait for Semaphore API to become available
+  ansible.builtin.uri:
+    url: "http://localhost:{{ semaphore_port }}/api/ping"
+    return_content: true
+    status_code: 200
+  register: ping_check
+  retries: 5
+  delay: 3
+  until: ping_check.status == 200
+
+- name: Validate Semaphore is responding
+  ansible.builtin.assert:
+    that:
+      - "'pong' in ping_check.content"
+    fail_msg: "Semaphore API is not responding correctly"
+    success_msg: "Semaphore UI v{{ semaphore_version }} is running on port {{ semaphore_port }} — API responding"
