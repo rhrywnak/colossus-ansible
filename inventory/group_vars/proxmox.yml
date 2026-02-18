@@ -43,3 +43,4 @@ pbs_backup_jobs:
   - name: backup-semaphore
     vmid: 315
     notes: "Semaphore UI scheduled backup"
+ansible_python_interpreter: /usr/bin/python3
