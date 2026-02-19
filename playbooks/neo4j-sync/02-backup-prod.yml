@@ -1,0 +1,155 @@
+---
+# playbooks/neo4j-sync/02-backup-prod.yml
+#
+# Phase 2: Back Up PROD Neo4j (Safety Net)
+# Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §4
+#
+# Creates a neo4j-admin database dump of PROD before any destructive
+# operations. This dump is the rollback safety net — if anything goes
+# wrong during the sync, rollback.yml restores from this file.
+#
+# Operations on VM-110 (colossus-prod-db1):
+#   1. Stop colossus-neo4j.service (required — offline operation)
+#   2. Run neo4j-admin database dump via one-shot Podman container
+#   3. Fetch dump file to controller staging directory
+#   4. Clean up dump from VM data directory (saves ZFS space)
+#   5. Restart Neo4j and verify it recovers
+#
+# PROD is offline for ~1-3 minutes during this phase.
+# Applications on VM-120 will lose DB connectivity temporarily.
+
+- name: "Phase 2 — Back Up PROD Neo4j"
+  hosts: colossus-prod-db1
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    # ── Verify staging directory exists (created by preflight) ────
+    - name: "Ensure staging directory exists on controller"
+      ansible.builtin.file:
+        path: "{{ sync_staging_dir }}"
+        state: directory
+        mode: '0750'
+      delegate_to: localhost
+      become: false
+
+    # ── Stop PROD Neo4j ───────────────────────────────────────────
+    - name: "Stop {{ neo4j_service }} on PROD (VM-110)"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+        state: stopped
+
+    - name: "Verify service is stopped"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+      register: svc_state
+      failed_when: svc_state.status.ActiveState not in ["inactive", "failed"]
+
+    # ── Remove any stale dump file before dumping ───────────────
+    # neo4j-admin refuses to overwrite existing dump files (no --force).
+    # A stale file could exist from a prior failed run.
+    - name: "Remove stale dump file (if present)"
+      ansible.builtin.file:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        state: absent
+
+    # ── Create neo4j-admin dump (one-shot Podman container) ───────
+    # The dump requires exclusive access to data files — this is why
+    # the service must be stopped. The one-shot container mounts the
+    # same data directory and runs neo4j-admin, then exits.
+    #
+    # --security-opt label=disable: required for virtiofs (no :Z)
+    # --rm: auto-remove container after exit
+    # --to-path=/data: writes neo4j.dump into the data directory
+    - name: "Run neo4j-admin database dump (one-shot container)"
+      ansible.builtin.command: >
+        podman run --rm
+        {{ podman_security_opts }}
+        -v {{ neo4j_data_dir }}:/data
+        {{ neo4j_image }}
+        neo4j-admin database dump neo4j --to-path=/data
+      register: dump_result
+
+    - name: "Display dump output"
+      ansible.builtin.debug:
+        msg: "{{ dump_result.stdout_lines }}"
+      when: dump_result.stdout_lines | length > 0
+
+    # ── Verify dump file exists ───────────────────────────────────
+    - name: "Stat dump file"
+      ansible.builtin.stat:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+      register: dump_file
+
+    - name: "GATE: Assert dump file exists and is not empty"
+      ansible.builtin.assert:
+        that:
+          - dump_file.stat.exists
+          - dump_file.stat.size > 0
+        fail_msg: "Dump file not found or empty at {{ neo4j_data_dir }}/{{ neo4j_dump_filename }}. Aborting."
+        success_msg: "PROD dump created: {{ dump_file.stat.size | human_readable }}"
+
+    # ── Fetch dump to controller ──────────────────────────────────
+    # Ansible's fetch module copies from remote → controller.
+    # This replaces the manual: scp core@VM110:/var/mnt/data/neo4j/neo4j.dump ~/backup/
+    - name: "Fetch PROD dump to controller staging directory"
+      ansible.builtin.fetch:
+        src: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        dest: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+        flat: true
+
+    # ── Clean up dump from data directory ─────────────────────────
+    # The dump file lives on the ZFS dataset. Leaving it wastes space
+    # and could confuse future operations.
+    - name: "Remove dump file from PROD data directory"
+      ansible.builtin.file:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        state: absent
+
+    # ── Restart PROD Neo4j ────────────────────────────────────────
+    # PROD comes back online immediately. Applications on VM-120
+    # will reconnect automatically.
+    - name: "Start {{ neo4j_service }} on PROD"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+        state: started
+
+    - name: "Wait for PROD Neo4j to become ready"
+      ansible.builtin.uri:
+        url: "http://localhost:{{ neo4j_port }}"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: "{{ neo4j_startup_retries }}"
+      delay: "{{ neo4j_startup_delay }}"
+
+    # ── Verify backup on controller ───────────────────────────────
+    - name: "Stat backup file on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: backup_on_controller
+      delegate_to: localhost
+      become: false
+
+    # ── Summary ───────────────────────────────────────────────────
+    - name: "═══ PHASE 2 SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           PROD NEO4J BACKUP COMPLETE
+          ═══════════════════════════════════════════════════════
+
+           Backup file: {{ sync_staging_dir }}/{{ prod_backup_filename }}
+           Size:        {{ backup_on_controller.stat.size | human_readable }}
+           PROD Neo4j:  Back online and healthy
+
+           This backup is the rollback safety net.
+           If anything goes wrong, run "Rollback" in Semaphore.
+
+          ═══════════════════════════════════════════════════════
+           NEXT: Run "03 - Dump DEV" in Semaphore
+          ═══════════════════════════════════════════════════════

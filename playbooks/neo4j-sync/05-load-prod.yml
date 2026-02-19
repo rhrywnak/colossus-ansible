@@ -1,0 +1,149 @@
+---
+# playbooks/neo4j-sync/05-load-prod.yml
+#
+# Phase 5: Load DEV Data into PROD (⚠ DESTRUCTIVE ⚠)
+# Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §6 (second half)
+#
+# THIS PHASE OVERWRITES ALL DATA IN THE PROD NEO4J DATABASE.
+#
+# The --overwrite-destination=true flag tells neo4j-admin to replace
+# the existing database entirely. After this phase, PROD contains an
+# exact copy of the DEV database.
+#
+# How neo4j-admin database load works internally:
+#   1. Removes existing database store files from the data directory
+#   2. Extracts the dump archive into the data directory
+#   3. Rebuilds internal metadata so Neo4j recognizes the DB on startup
+#
+# Authentication survives the sync — Prod's Neo4j password is unchanged.
+#
+# PROD is offline for ~1-3 minutes during this phase.
+
+- name: "Phase 5 — ⚠ Load DEV Data into PROD (DESTRUCTIVE)"
+  hosts: colossus-prod-db1
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    # ── Safety gates ──────────────────────────────────────────────
+    - name: "GATE: Verify PROD rollback backup exists on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: rollback_backup
+      delegate_to: localhost
+      become: false
+
+    - name: "GATE: Assert rollback backup is present"
+      ansible.builtin.assert:
+        that:
+          - rollback_backup.stat.exists
+          - rollback_backup.stat.size > 0
+        fail_msg: >
+          CRITICAL: PROD rollback backup not found at
+          {{ sync_staging_dir }}/{{ prod_backup_filename }}.
+          REFUSING to proceed without a rollback safety net.
+        success_msg: "Rollback backup verified ({{ rollback_backup.stat.size | human_readable }})"
+
+    - name: "GATE: Verify DEV dump file is staged on PROD"
+      ansible.builtin.stat:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+      register: staged_dump
+
+    - name: "GATE: Assert dump file is staged"
+      ansible.builtin.assert:
+        that:
+          - staged_dump.stat.exists
+          - staged_dump.stat.size > 0
+        fail_msg: >
+          DEV dump file not found at {{ neo4j_data_dir }}/{{ neo4j_dump_filename }}.
+          Did Phase 4 (Transfer) complete successfully?
+        success_msg: "DEV dump staged and ready ({{ staged_dump.stat.size | human_readable }})"
+
+    # ── Stop PROD Neo4j ───────────────────────────────────────────
+    - name: "Stop {{ neo4j_service }} on PROD (VM-110)"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+        state: stopped
+
+    - name: "Verify service is stopped"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+      register: svc_state
+      failed_when: svc_state.status.ActiveState not in ["inactive", "failed"]
+
+    # ── Load DEV dump into PROD (DESTRUCTIVE) ─────────────────────
+    # This replaces ALL data in the PROD Neo4j database.
+    #
+    # Key flags:
+    #   --from-path=/data             Read dump from data directory
+    #   --overwrite-destination=true  Replace existing database
+    #   --security-opt label=disable  Required for virtiofs (no :Z)
+    - name: "⚠ DESTRUCTIVE: Load DEV dump into PROD Neo4j"
+      ansible.builtin.command: >
+        podman run --rm
+        {{ podman_security_opts }}
+        -v {{ neo4j_data_dir }}:/data
+        {{ neo4j_image }}
+        neo4j-admin database load neo4j
+        --from-path=/data
+        --overwrite-destination=true
+      register: load_result
+
+    - name: "Display load output"
+      ansible.builtin.debug:
+        msg: "{{ load_result.stdout_lines }}"
+      when: load_result.stdout_lines | length > 0
+
+    # ── Clean up dump file ────────────────────────────────────────
+    # Remove the dump from the data directory — it's been loaded and
+    # the original still exists on the controller for rollback.
+    - name: "Remove dump file from PROD data directory"
+      ansible.builtin.file:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        state: absent
+
+    # ── Restart PROD Neo4j ────────────────────────────────────────
+    - name: "Start {{ neo4j_service }} on PROD"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+        state: started
+
+    - name: "Wait for PROD Neo4j to become ready"
+      ansible.builtin.uri:
+        url: "http://localhost:{{ neo4j_port }}"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: "{{ neo4j_startup_retries }}"
+      delay: "{{ neo4j_startup_delay }}"
+
+    - name: "GATE: Assert PROD Neo4j recovered"
+      ansible.builtin.assert:
+        that:
+          - health_check.status == 200
+        fail_msg: >
+          PROD Neo4j did not recover after load.
+          Run "Rollback" in Semaphore to restore from pre-sync backup.
+        success_msg: "PROD Neo4j is online with the new data."
+
+    # ── Summary ───────────────────────────────────────────────────
+    - name: "═══ PHASE 5 SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           PROD NEO4J DATA REPLACED
+          ═══════════════════════════════════════════════════════
+
+           PROD Neo4j now contains the DEV database.
+           Service is online and accepting connections.
+
+           If something is wrong, run "Rollback" in Semaphore
+           BEFORE running any other sync phases.
+
+          ═══════════════════════════════════════════════════════
+           NEXT: Run "06 - Validate" in Semaphore
+          ═══════════════════════════════════════════════════════

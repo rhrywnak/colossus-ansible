@@ -1,0 +1,152 @@
+---
+# playbooks/neo4j-sync/03-dump-dev.yml
+#
+# Phase 3: Dump DEV Neo4j (The Source Data)
+# Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §5
+#
+# Creates a neo4j-admin database dump of DEV. This is the data that
+# will replace PROD in Phase 5.
+#
+# Operations on VM-210 (colossus-dev-db1):
+#   1. Stop colossus-neo4j.service (required — offline operation)
+#   2. Run neo4j-admin database dump via one-shot Podman container
+#   3. Fetch dump file to controller staging directory
+#   4. Clean up dump from VM data directory
+#   5. Restart Neo4j and verify it recovers
+#
+# After this phase, the controller has two files:
+#   - prod-pre-sync.dump  (from Phase 2 — rollback safety net)
+#   - dev.dump             (from this phase — will be loaded into PROD)
+
+- name: "Phase 3 — Dump DEV Neo4j"
+  hosts: colossus-dev-db1
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    # ── Verify PROD backup exists (Phase 2 must have completed) ───
+    - name: "GATE: Verify PROD backup exists on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: prod_backup
+      delegate_to: localhost
+      become: false
+
+    - name: "GATE: Assert PROD backup was created in Phase 2"
+      ansible.builtin.assert:
+        that:
+          - prod_backup.stat.exists
+          - prod_backup.stat.size > 0
+        fail_msg: >
+          PROD backup not found at {{ sync_staging_dir }}/{{ prod_backup_filename }}.
+          Did Phase 2 (Backup PROD) complete successfully?
+        success_msg: "PROD backup verified ({{ prod_backup.stat.size | human_readable }})"
+
+    # ── Stop DEV Neo4j ────────────────────────────────────────────
+    - name: "Stop {{ neo4j_service }} on DEV (VM-210)"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+        state: stopped
+
+    - name: "Verify service is stopped"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+      register: svc_state
+      failed_when: svc_state.status.ActiveState not in ["inactive", "failed"]
+
+    # ── Remove any stale dump file before dumping ───────────────
+    # neo4j-admin refuses to overwrite existing dump files (no --force).
+    # A stale file could exist from a prior failed run.
+    - name: "Remove stale dump file (if present)"
+      ansible.builtin.file:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        state: absent
+
+    # ── Create neo4j-admin dump ───────────────────────────────────
+    - name: "Run neo4j-admin database dump (one-shot container)"
+      ansible.builtin.command: >
+        podman run --rm
+        {{ podman_security_opts }}
+        -v {{ neo4j_data_dir }}:/data
+        {{ neo4j_image }}
+        neo4j-admin database dump neo4j --to-path=/data
+      register: dump_result
+
+    - name: "Display dump output"
+      ansible.builtin.debug:
+        msg: "{{ dump_result.stdout_lines }}"
+      when: dump_result.stdout_lines | length > 0
+
+    # ── Verify dump file ──────────────────────────────────────────
+    - name: "Stat dump file"
+      ansible.builtin.stat:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+      register: dump_file
+
+    - name: "GATE: Assert dump file exists and is not empty"
+      ansible.builtin.assert:
+        that:
+          - dump_file.stat.exists
+          - dump_file.stat.size > 0
+        fail_msg: "Dump file not found or empty at {{ neo4j_data_dir }}/{{ neo4j_dump_filename }}. Aborting."
+        success_msg: "DEV dump created: {{ dump_file.stat.size | human_readable }}"
+
+    # ── Fetch dump to controller ──────────────────────────────────
+    - name: "Fetch DEV dump to controller staging directory"
+      ansible.builtin.fetch:
+        src: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        dest: "{{ sync_staging_dir }}/{{ dev_dump_filename }}"
+        flat: true
+
+    # ── Clean up dump from data directory ─────────────────────────
+    - name: "Remove dump file from DEV data directory"
+      ansible.builtin.file:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        state: absent
+
+    # ── Restart DEV Neo4j ─────────────────────────────────────────
+    - name: "Start {{ neo4j_service }} on DEV"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+        state: started
+
+    - name: "Wait for DEV Neo4j to become ready"
+      ansible.builtin.uri:
+        url: "http://localhost:{{ neo4j_port }}"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: "{{ neo4j_startup_retries }}"
+      delay: "{{ neo4j_startup_delay }}"
+
+    # ── Verify both dumps on controller ───────────────────────────
+    - name: "Stat DEV dump on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ dev_dump_filename }}"
+      register: dev_on_controller
+      delegate_to: localhost
+      become: false
+
+    # ── Summary ───────────────────────────────────────────────────
+    - name: "═══ PHASE 3 SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           DEV NEO4J DUMP COMPLETE
+          ═══════════════════════════════════════════════════════
+
+           DEV dump:    {{ sync_staging_dir }}/{{ dev_dump_filename }}
+           Size:        {{ dev_on_controller.stat.size | human_readable }}
+           DEV Neo4j:   Back online and healthy
+
+           Both VMs are running normally. Controller has:
+             {{ prod_backup_filename }}  — PROD rollback safety net
+             {{ dev_dump_filename }}              — Source data for PROD
+
+          ═══════════════════════════════════════════════════════
+           NEXT: Run "04 - Transfer" in Semaphore
+          ═══════════════════════════════════════════════════════

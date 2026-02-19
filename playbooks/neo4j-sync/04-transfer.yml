@@ -1,0 +1,108 @@
+---
+# playbooks/neo4j-sync/04-transfer.yml
+#
+# Phase 4: Transfer DEV Dump to PROD
+# Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §6 (first half)
+#
+# Copies the DEV dump file from the Ansible controller (CT-315) to
+# VM-110 (PROD). The file is placed in the Neo4j data directory so
+# Phase 5 can load it.
+#
+# Transfer path: controller → VM-110:/tmp → /var/mnt/data/neo4j/
+# (Two-step to match runbook pattern: core user writes to /tmp,
+#  then root moves into the virtiofs-mounted data directory.)
+#
+# No Neo4j downtime in this phase — PROD stays online.
+
+- name: "Phase 4 — Transfer DEV dump to PROD"
+  hosts: colossus-prod-db1
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    # ── Verify source file on controller ──────────────────────────
+    - name: "GATE: Verify DEV dump exists on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ dev_dump_filename }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: source_file
+      delegate_to: localhost
+      become: false
+
+    - name: "GATE: Assert DEV dump is present"
+      ansible.builtin.assert:
+        that:
+          - source_file.stat.exists
+          - source_file.stat.size > 0
+        fail_msg: >
+          DEV dump not found at {{ sync_staging_dir }}/{{ dev_dump_filename }}.
+          Did Phase 3 (Dump DEV) complete successfully?
+        success_msg: "DEV dump verified: {{ source_file.stat.size | human_readable }} (sha256: {{ source_file.stat.checksum }})"
+
+    # ── Copy dump to PROD VM ──────────────────────────────────────
+    # Step 1: Copy to /tmp (writable by all users)
+    # Step 2: Move into data directory (requires root)
+    #
+    # This matches the runbook pattern:
+    #   scp dev.dump core@VM110:/tmp/neo4j.dump
+    #   ssh core@VM110 'sudo mv /tmp/neo4j.dump /var/mnt/data/neo4j/'
+    - name: "Copy DEV dump to PROD /tmp"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/{{ dev_dump_filename }}"
+        dest: "/tmp/{{ neo4j_dump_filename }}"
+        mode: '0644'
+      # become: true is inherited from play level
+
+    - name: "Move dump into PROD data directory"
+      ansible.builtin.command: >
+        mv /tmp/{{ neo4j_dump_filename }} {{ neo4j_data_dir }}/{{ neo4j_dump_filename }}
+
+    # ── Verify file on PROD ───────────────────────────────────────
+    - name: "Stat dump file on PROD"
+      ansible.builtin.stat:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: dest_file
+
+    - name: "GATE: Assert file arrived intact"
+      ansible.builtin.assert:
+        that:
+          - dest_file.stat.exists
+          - dest_file.stat.checksum == source_file.stat.checksum
+        fail_msg: >
+          Checksum mismatch! Source: {{ source_file.stat.checksum }}
+          Destination: {{ dest_file.stat.checksum | default('FILE MISSING') }}
+          Transfer may be corrupted. Do NOT proceed to Phase 5.
+        success_msg: "Transfer verified — checksums match (sha256: {{ dest_file.stat.checksum }})"
+
+    # ── Summary ───────────────────────────────────────────────────
+    - name: "═══ PHASE 4 SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           DEV DUMP TRANSFERRED TO PROD
+          ═══════════════════════════════════════════════════════
+
+           Source:    {{ sync_staging_dir }}/{{ dev_dump_filename }} (controller)
+           Dest:      {{ neo4j_data_dir }}/{{ neo4j_dump_filename }} (VM-110)
+           Size:      {{ dest_file.stat.size | human_readable }}
+           Checksum:  {{ dest_file.stat.checksum }} ✓ MATCH
+
+           PROD Neo4j is still running. The dump file is staged
+           in the data directory, ready for Phase 5 to load.
+
+          ═══════════════════════════════════════════════════════
+           ⚠ WARNING: The next phase is DESTRUCTIVE
+           ⚠ Phase 5 will OVERWRITE all PROD Neo4j data
+           ⚠ with the DEV copy.
+           ⚠
+           ⚠ Confirm PROD backup exists before proceeding:
+           ⚠   {{ sync_staging_dir }}/{{ prod_backup_filename }}
+          ═══════════════════════════════════════════════════════
+           NEXT: Run "05 - Load PROD" in Semaphore
+          ═══════════════════════════════════════════════════════

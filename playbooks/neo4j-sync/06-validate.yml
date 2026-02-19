@@ -1,0 +1,169 @@
+---
+# playbooks/neo4j-sync/06-validate.yml
+#
+# Phase 6: Validate the Sync
+# Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §7
+#
+# Confirms PROD now contains the same data as DEV by comparing:
+#   - Total node counts (PROD must equal DEV)
+#   - Total relationship counts (PROD must equal DEV)
+#   - Node counts by label (displayed for operator review)
+#   - DEV unchanged (no side effects from the sync)
+#
+# If validation fails, run "Rollback" in Semaphore immediately.
+
+- name: "Phase 6 — Validate Sync"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - vars.yml
+    - ../../secrets/vault.yml
+
+  tasks:
+    # ── Query PROD counts (should now match DEV) ──────────────────
+    - name: "Query PROD total node count"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_prod_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_total_nodes }}"
+        status_code: 200
+      register: prod_nodes_result
+
+    - name: "Query PROD total relationship count"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_prod_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_total_relationships }}"
+        status_code: 200
+      register: prod_rels_result
+
+    - name: "Query PROD nodes by label"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_prod_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_nodes_by_label }}"
+        status_code: 200
+      register: prod_labels
+
+    # ── Query DEV counts (should be unchanged) ────────────────────
+    - name: "Query DEV total node count"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_dev_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_total_nodes }}"
+        status_code: 200
+      register: dev_nodes_result
+
+    - name: "Query DEV total relationship count"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_dev_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_total_relationships }}"
+        status_code: 200
+      register: dev_rels_result
+
+    # ── Extract counts ────────────────────────────────────────────
+    - name: "Set count facts"
+      ansible.builtin.set_fact:
+        prod_nodes: "{{ prod_nodes_result.json.results[0].data[0].row[0] }}"
+        prod_rels: "{{ prod_rels_result.json.results[0].data[0].row[0] }}"
+        dev_nodes: "{{ dev_nodes_result.json.results[0].data[0].row[0] }}"
+        dev_rels: "{{ dev_rels_result.json.results[0].data[0].row[0] }}"
+
+    # ── Parity assertions ─────────────────────────────────────────
+    - name: "GATE: Assert PROD node count matches DEV"
+      ansible.builtin.assert:
+        that:
+          - prod_nodes | int == dev_nodes | int
+        fail_msg: >
+          NODE COUNT MISMATCH!
+          PROD: {{ prod_nodes }} nodes, DEV: {{ dev_nodes }} nodes.
+          Sync may have failed. Consider running Rollback.
+        success_msg: "Node counts match: {{ prod_nodes }} == {{ dev_nodes }}"
+
+    - name: "GATE: Assert PROD relationship count matches DEV"
+      ansible.builtin.assert:
+        that:
+          - prod_rels | int == dev_rels | int
+        fail_msg: >
+          RELATIONSHIP COUNT MISMATCH!
+          PROD: {{ prod_rels }} relationships, DEV: {{ dev_rels }} relationships.
+          Sync may have failed. Consider running Rollback.
+        success_msg: "Relationship counts match: {{ prod_rels }} == {{ dev_rels }}"
+
+    # ── Load pre-flight baseline for comparison ───────────────────
+    - name: "Load pre-flight baseline (if available)"
+      ansible.builtin.slurp:
+        src: "{{ sync_staging_dir }}/baseline.json"
+      register: baseline_raw
+      ignore_errors: true
+
+    - name: "Parse baseline"
+      ansible.builtin.set_fact:
+        baseline: "{{ baseline_raw.content | b64decode | from_json }}"
+      when: baseline_raw is succeeded
+
+    # ── Summary ───────────────────────────────────────────────────
+    - name: "═══ PHASE 6 VALIDATION SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           SYNC VALIDATION RESULTS
+          ═══════════════════════════════════════════════════════
+
+           PROD (VM-110) — After Sync:
+             Nodes:         {{ prod_nodes }}
+             Relationships: {{ prod_rels }}
+
+           DEV  (VM-210) — Unchanged:
+             Nodes:         {{ dev_nodes }}
+             Relationships: {{ dev_rels }}
+
+           Parity Check:
+             Nodes:         {{ '✓ MATCH' if (prod_nodes | int == dev_nodes | int) else '✗ MISMATCH' }}
+             Relationships: {{ '✓ MATCH' if (prod_rels | int == dev_rels | int) else '✗ MISMATCH' }}
+          {% if baseline is defined %}
+
+           Pre-Flight Baseline (from Phase 1):
+             DEV had:  {{ baseline.dev.nodes }} nodes, {{ baseline.dev.relationships }} rels
+             PROD had: {{ baseline.prod_before_sync.nodes }} nodes, {{ baseline.prod_before_sync.relationships }} rels
+          {% endif %}
+
+           PROD node breakdown:
+          {{ prod_labels.json.results[0].data | to_nice_yaml }}
+          ═══════════════════════════════════════════════════════
+           ✓ SYNC VALIDATED SUCCESSFULLY
+           NEXT: Run "07 - Cleanup" in Semaphore
+          ═══════════════════════════════════════════════════════

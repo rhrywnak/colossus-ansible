@@ -1,0 +1,209 @@
+---
+# playbooks/neo4j-sync/01-preflight.yml
+#
+# Phase 1: Pre-flight Checks
+# Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §3
+#
+# Validates:
+#   - SSH connectivity to both DB VMs (implicit via Ansible connection)
+#   - colossus-neo4j.service active on both VMs
+#   - Neo4j HTTP endpoint responding on both VMs
+#   - Node and relationship counts recorded (baseline for Phase 6 validation)
+#
+# Operator action after reviewing output:
+#   If all checks pass → Run 02-backup-prod in Semaphore
+#   If any check fails → Investigate before proceeding
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 1: Verify Neo4j services on both DB VMs
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 1 — Pre-flight: Service & connectivity checks"
+  hosts: colossus-dev-db1,colossus-prod-db1
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: "Check {{ neo4j_service }} is active"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+      register: neo4j_svc
+      failed_when: neo4j_svc.status.ActiveState != "active"
+
+    - name: "GATE: Assert Neo4j service is running"
+      ansible.builtin.assert:
+        that:
+          - neo4j_svc.status.ActiveState == "active"
+        fail_msg: "{{ neo4j_service }} is {{ neo4j_svc.status.ActiveState }} on {{ inventory_hostname }}. Cannot proceed."
+        success_msg: "{{ neo4j_service }} is active on {{ inventory_hostname }}"
+
+    - name: "Check Neo4j HTTP endpoint (localhost:{{ neo4j_port }})"
+      ansible.builtin.uri:
+        url: "http://localhost:{{ neo4j_port }}"
+        method: GET
+        status_code: 200
+      register: neo4j_http
+
+    - name: "GATE: Assert Neo4j HTTP endpoint responded"
+      ansible.builtin.assert:
+        that:
+          - neo4j_http.status == 200
+        fail_msg: "Neo4j HTTP endpoint not responding on {{ inventory_hostname }}:{{ neo4j_port }}"
+        success_msg: "Neo4j HTTP endpoint healthy on {{ inventory_hostname }}"
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 2: Record baseline node/relationship counts
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 1 — Pre-flight: Record baseline counts"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - vars.yml
+    - ../../secrets/vault.yml
+
+  tasks:
+    # ── Create staging directory ──────────────────────────────────
+    - name: "Create sync staging directory"
+      ansible.builtin.file:
+        path: "{{ sync_staging_dir }}"
+        state: directory
+        mode: '0750'
+
+    # ── DEV counts (SOURCE — what PROD should look like after sync) ─
+    - name: "Query DEV total node count"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_dev_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_total_nodes }}"
+        status_code: 200
+        return_content: true
+      register: dev_total_nodes
+
+    - name: "Query DEV total relationship count"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_dev_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_total_relationships }}"
+        status_code: 200
+        return_content: true
+      register: dev_total_rels
+
+    - name: "Query DEV nodes by label"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_dev_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_nodes_by_label }}"
+        status_code: 200
+        return_content: true
+      register: dev_labels
+
+    # ── PROD counts (TARGET — will be overwritten) ────────────────
+    - name: "Query PROD total node count"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_prod_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_total_nodes }}"
+        status_code: 200
+        return_content: true
+      register: prod_total_nodes
+
+    - name: "Query PROD total relationship count"
+      ansible.builtin.uri:
+        url: "http://{{ neo4j_prod_ip }}:{{ neo4j_port }}/db/neo4j/tx/commit"
+        method: POST
+        user: "{{ neo4j_user }}"
+        password: "{{ vault_neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "{{ cypher_total_relationships }}"
+        status_code: 200
+        return_content: true
+      register: prod_total_rels
+
+    # ── Extract counts ────────────────────────────────────────────
+    - name: "Set count facts"
+      ansible.builtin.set_fact:
+        dev_nodes: "{{ dev_total_nodes.json.results[0].data[0].row[0] }}"
+        dev_rels: "{{ dev_total_rels.json.results[0].data[0].row[0] }}"
+        prod_nodes: "{{ prod_total_nodes.json.results[0].data[0].row[0] }}"
+        prod_rels: "{{ prod_total_rels.json.results[0].data[0].row[0] }}"
+
+    - name: "GATE: Assert DEV has data to sync"
+      ansible.builtin.assert:
+        that:
+          - dev_nodes | int > 0
+        fail_msg: "DEV Neo4j has 0 nodes. Nothing to sync. Aborting."
+        success_msg: "DEV Neo4j has {{ dev_nodes }} nodes — ready to sync."
+
+    # ── Save baseline to file (for operator reference) ────────────
+    - name: "Save baseline counts to staging directory"
+      ansible.builtin.copy:
+        content: |
+          {
+            "timestamp": "{{ ansible_date_time.iso8601 }}",
+            "dev": {
+              "nodes": {{ dev_nodes }},
+              "relationships": {{ dev_rels }}
+            },
+            "prod_before_sync": {
+              "nodes": {{ prod_nodes }},
+              "relationships": {{ prod_rels }}
+            }
+          }
+        dest: "{{ sync_staging_dir }}/baseline.json"
+        mode: '0640'
+
+    # ── Display summary ───────────────────────────────────────────
+    - name: "═══ PRE-FLIGHT SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           NEO4J DEV→PROD SYNC — PRE-FLIGHT RESULTS
+          ═══════════════════════════════════════════════════════
+
+           DEV  (VM-210, {{ neo4j_dev_ip }}):
+             Nodes:         {{ dev_nodes }}
+             Relationships: {{ dev_rels }}
+
+           PROD (VM-110, {{ neo4j_prod_ip }}):
+             Nodes:         {{ prod_nodes }}
+             Relationships: {{ prod_rels }}
+
+           DEV node breakdown:
+          {{ dev_labels.json.results[0].data | to_nice_yaml }}
+
+           Baseline saved to: {{ sync_staging_dir }}/baseline.json
+
+          ═══════════════════════════════════════════════════════
+           ALL CHECKS PASSED
+           NEXT: Run "02 - Backup PROD" in Semaphore
+          ═══════════════════════════════════════════════════════

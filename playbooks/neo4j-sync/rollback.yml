@@ -1,0 +1,136 @@
+---
+# playbooks/neo4j-sync/rollback.yml
+#
+# Emergency Rollback: Restore PROD from Pre-Sync Backup
+# Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §8
+#
+# Restores PROD Neo4j to its pre-sync state using the backup
+# created in Phase 2 (02-backup-prod.yml).
+#
+# PREREQUISITES:
+#   - Phase 2 must have completed (prod-pre-sync.dump on controller)
+#   - Phase 7 (Cleanup) must NOT have run (it deletes the backup)
+#
+# Run this if:
+#   - Phase 5 (Load) succeeded but Phase 6 (Validate) failed
+#   - PROD Neo4j is behaving unexpectedly after sync
+#   - Any other issue requiring PROD to return to pre-sync state
+
+- name: "⚠ ROLLBACK — Restore PROD Neo4j from Pre-Sync Backup"
+  hosts: colossus-prod-db1
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    # ── Verify backup exists ──────────────────────────────────────
+    - name: "GATE: Verify PROD pre-sync backup on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: backup_file
+      delegate_to: localhost
+      become: false
+
+    - name: "GATE: Assert backup is available"
+      ansible.builtin.assert:
+        that:
+          - backup_file.stat.exists
+          - backup_file.stat.size > 0
+        fail_msg: >
+          PROD pre-sync backup not found at
+          {{ sync_staging_dir }}/{{ prod_backup_filename }}.
+          If Phase 7 (Cleanup) already ran, the backup was removed.
+          Manual recovery from PBS daily backup is required.
+        success_msg: "Rollback backup found ({{ backup_file.stat.size | human_readable }})"
+
+    # ── Stop PROD Neo4j ───────────────────────────────────────────
+    - name: "Stop {{ neo4j_service }} on PROD (VM-110)"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+        state: stopped
+
+    - name: "Verify service is stopped"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+      register: svc_state
+      failed_when: svc_state.status.ActiveState not in ["inactive", "failed"]
+
+    # ── Copy pre-sync backup to PROD ──────────────────────────────
+    - name: "Copy pre-sync backup to PROD /tmp"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+        dest: "/tmp/{{ neo4j_dump_filename }}"
+        mode: '0644'
+
+    - name: "Move backup into PROD data directory"
+      ansible.builtin.command: >
+        mv /tmp/{{ neo4j_dump_filename }} {{ neo4j_data_dir }}/{{ neo4j_dump_filename }}
+
+    # ── Restore from backup ───────────────────────────────────────
+    - name: "Restore PROD from pre-sync backup"
+      ansible.builtin.command: >
+        podman run --rm
+        {{ podman_security_opts }}
+        -v {{ neo4j_data_dir }}:/data
+        {{ neo4j_image }}
+        neo4j-admin database load neo4j
+        --from-path=/data
+        --overwrite-destination=true
+      register: restore_result
+
+    - name: "Display restore output"
+      ansible.builtin.debug:
+        msg: "{{ restore_result.stdout_lines }}"
+      when: restore_result.stdout_lines | length > 0
+
+    # ── Clean up and restart ──────────────────────────────────────
+    - name: "Remove dump file from PROD data directory"
+      ansible.builtin.file:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        state: absent
+
+    - name: "Start {{ neo4j_service }} on PROD"
+      ansible.builtin.systemd:
+        name: "{{ neo4j_service }}"
+        state: started
+
+    - name: "Wait for PROD Neo4j to become ready"
+      ansible.builtin.uri:
+        url: "http://localhost:{{ neo4j_port }}"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: "{{ neo4j_startup_retries }}"
+      delay: "{{ neo4j_startup_delay }}"
+
+    - name: "GATE: Assert PROD Neo4j recovered"
+      ansible.builtin.assert:
+        that:
+          - health_check.status == 200
+        fail_msg: >
+          PROD Neo4j did not recover after rollback restore.
+          Manual intervention required — check journalctl on VM-110.
+        success_msg: "PROD Neo4j restored and healthy."
+
+    # ── Summary ───────────────────────────────────────────────────
+    - name: "═══ ROLLBACK SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           ROLLBACK COMPLETE
+          ═══════════════════════════════════════════════════════
+
+           PROD Neo4j has been restored to its pre-sync state.
+           The database now contains the data from BEFORE the
+           sync was attempted.
+
+           Service is online and accepting connections.
+
+           Next steps:
+             1. Verify PROD data via Semaphore UI or manual query
+             2. Investigate what went wrong before retrying
+             3. Run "07 - Cleanup" when ready to remove temp files
+          ═══════════════════════════════════════════════════════

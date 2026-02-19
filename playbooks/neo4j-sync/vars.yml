@@ -1,0 +1,50 @@
+# playbooks/neo4j-sync/vars.yml
+# Shared variables for all Neo4j dev→prod sync playbooks.
+#
+# Every playbook in this directory includes this file via vars_files.
+# Values here map directly to the manual runbook:
+#   NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md
+#
+# Neo4j credentials come from secrets/vault.yml (vault_neo4j_password).
+
+# ── VM Targets ────────────────────────────────────────────────────
+neo4j_dev_host: colossus-dev-db1       # VM-210, 10.10.100.200
+neo4j_dev_ip: 10.10.100.200
+neo4j_prod_host: colossus-prod-db1     # VM-110, 10.10.100.110
+neo4j_prod_ip: 10.10.100.110
+
+# ── Neo4j Service ─────────────────────────────────────────────────
+neo4j_service: colossus-neo4j.service
+neo4j_image: "docker.io/library/neo4j:5"
+neo4j_data_dir: /var/mnt/data/neo4j    # virtiofs mount on both VMs
+neo4j_port: 7474                        # HTTP API port
+neo4j_user: neo4j
+
+# ── Dump File Names ───────────────────────────────────────────────
+# neo4j-admin always creates "neo4j.dump" (named after the database).
+# On the VM, it lands in neo4j_data_dir.
+neo4j_dump_filename: neo4j.dump
+
+# ── Controller Staging Directory ──────────────────────────────────
+# Dump files are staged on the Ansible controller (CT-315 / workstation)
+# during the sync workflow. This directory is created by 02-backup-prod
+# and cleaned by 07-cleanup.
+sync_staging_dir: /tmp/neo4j-sync
+prod_backup_filename: prod-pre-sync.dump
+dev_dump_filename: dev.dump
+
+# ── Podman One-Shot Container Flags ───────────────────────────────
+# SELinux + virtiofs: cannot use :Z volume flag.
+# --security-opt label=disable is required for all one-shot containers.
+# --rm removes the container after exit.
+podman_security_opts: "--security-opt label=disable"
+
+# ── Timeouts ──────────────────────────────────────────────────────
+neo4j_startup_retries: 12              # Number of health check attempts
+neo4j_startup_delay: 5                 # Seconds between attempts (12 × 5 = 60s max)
+
+# ── Cypher Queries ────────────────────────────────────────────────
+# Used by preflight and validate phases to count nodes/relationships.
+cypher_total_nodes: "MATCH (n) RETURN count(n) AS total"
+cypher_total_relationships: "MATCH ()-[r]->() RETURN count(r) AS total"
+cypher_nodes_by_label: "MATCH (n) RETURN labels(n) AS label, count(n) AS count ORDER BY count DESC"

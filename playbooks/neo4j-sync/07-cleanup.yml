@@ -1,0 +1,101 @@
+---
+# playbooks/neo4j-sync/07-cleanup.yml
+#
+# Phase 7: Cleanup
+# Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §9 (cleanup checklist)
+#
+# Removes all temporary files created during the sync:
+#   - Dump files from VM data directories (should already be clean)
+#   - Controller staging directory (dump files + baseline)
+#
+# ⚠ This removes the PROD pre-sync backup from the controller.
+#    After this phase, rollback requires restoring from PBS.
+#    Only run this after confirming Phase 6 validation passed.
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 1: Clean up VM data directories (belt and suspenders)
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 7 — Cleanup: Remove stale dump files from VMs"
+  hosts: colossus-dev-db1,colossus-prod-db1
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: "Check for stale dump file in data directory"
+      ansible.builtin.stat:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+      register: stale_dump
+
+    - name: "Remove stale dump file (if present)"
+      ansible.builtin.file:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        state: absent
+      when: stale_dump.stat.exists
+
+    - name: "Report cleanup status"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{
+            'Removed stale ' + neo4j_dump_filename + ' from data directory'
+            if stale_dump.stat.exists
+            else 'Data directory clean — no stale dump files'
+          }}
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 2: Clean up controller staging directory
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 7 — Cleanup: Remove staging directory from controller"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: "List staging directory contents before removal"
+      ansible.builtin.find:
+        paths: "{{ sync_staging_dir }}"
+        file_type: file
+      register: staging_files
+      ignore_errors: true
+
+    - name: "Display files being removed"
+      ansible.builtin.debug:
+        msg: "Removing: {{ item.path }} ({{ item.size | human_readable }})"
+      loop: "{{ staging_files.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: "Remove staging directory"
+      ansible.builtin.file:
+        path: "{{ sync_staging_dir }}"
+        state: absent
+
+    - name: "Verify staging directory removed"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}"
+      register: staging_check
+
+    - name: "═══ PHASE 7 SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           CLEANUP COMPLETE
+          ═══════════════════════════════════════════════════════
+
+           Removed {{ staging_files.files | default([]) | length }} file(s) from controller
+           Staging directory: {{ 'removed' if not staging_check.stat.exists else 'STILL EXISTS (investigate)' }}
+           VM data directories: verified clean
+
+          ═══════════════════════════════════════════════════════
+           ✓ NEO4J DEV→PROD SYNC COMPLETE
+          ═══════════════════════════════════════════════════════
+           Timestamp: {{ ansible_date_time.iso8601 }}
+
+           PROD Neo4j now matches DEV.
+           The PROD pre-sync backup has been removed.
+           Daily PBS backups provide the ongoing safety net.
+          ═══════════════════════════════════════════════════════
