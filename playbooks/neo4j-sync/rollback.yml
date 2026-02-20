@@ -4,17 +4,17 @@
 # Emergency Rollback: Restore PROD from Pre-Sync Backup
 # Maps to: NEO4J_DEV_TO_PROD_SYNC_RUNBOOK.md §8
 #
-# Restores PROD Neo4j to its pre-sync state using the backup
-# created in Phase 2 (02-backup-prod.yml).
+# Restores PROD Neo4j to its pre-sync state using the most recent
+# PROD backup from the archive directory.
 #
-# PREREQUISITES:
-#   - Phase 2 must have completed (prod-pre-sync.dump on controller)
-#   - Phase 7 (Cleanup) must NOT have run (it deletes the backup)
+# Backup search order:
+#   1. /opt/neo4j-sync/prod-latest.dump (symlink from full sync)
+#   2. /tmp/neo4j-sync/prod-pre-sync.dump (from individual phase runs)
 #
 # Run this if:
-#   - Phase 5 (Load) succeeded but Phase 6 (Validate) failed
-#   - PROD Neo4j is behaving unexpectedly after sync
-#   - Any other issue requiring PROD to return to pre-sync state
+#   - Sync completed but PROD data looks wrong
+#   - Application behavior is unexpected after sync
+#   - Validation passed but something was missed
 
 - name: "⚠ ROLLBACK — Restore PROD Neo4j from Pre-Sync Backup"
   hosts: colossus-prod-db1
@@ -22,27 +22,62 @@
   become: true
   vars_files:
     - vars.yml
+  vars:
+    sync_archive_dir: /opt/neo4j-sync
 
   tasks:
-    # ── Verify backup exists ──────────────────────────────────────
-    - name: "GATE: Verify PROD pre-sync backup on controller"
+    # ── Locate the backup file ────────────────────────────────────
+    # Check archive first (full sync workflow), then staging (individual phases)
+    - name: "Check archive for prod-latest.dump"
+      ansible.builtin.stat:
+        path: "{{ sync_archive_dir }}/prod-latest.dump"
+      register: archive_backup
+      delegate_to: localhost
+      become: false
+
+    - name: "Check staging for prod-pre-sync.dump (fallback)"
       ansible.builtin.stat:
         path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: staging_backup
+      delegate_to: localhost
+      become: false
+      when: not archive_backup.stat.exists
+
+    - name: "Select backup source"
+      ansible.builtin.set_fact:
+        rollback_source: >-
+          {{
+            (sync_archive_dir + '/prod-latest.dump')
+            if archive_backup.stat.exists
+            else (sync_staging_dir + '/' + prod_backup_filename)
+          }}
+        rollback_found: >-
+          {{
+            archive_backup.stat.exists
+            or (staging_backup.stat.exists | default(false))
+          }}
+
+    - name: "GATE: Assert a backup was found"
+      ansible.builtin.assert:
+        that:
+          - rollback_found | bool
+        fail_msg: >
+          No PROD backup found in either:
+            - {{ sync_archive_dir }}/prod-latest.dump
+            - {{ sync_staging_dir }}/{{ prod_backup_filename }}
+          Manual recovery from PBS daily backup is required.
+        success_msg: "Rollback source: {{ rollback_source }}"
+
+    - name: "Stat selected backup"
+      ansible.builtin.stat:
+        path: "{{ rollback_source }}"
       register: backup_file
       delegate_to: localhost
       become: false
 
-    - name: "GATE: Assert backup is available"
-      ansible.builtin.assert:
-        that:
-          - backup_file.stat.exists
-          - backup_file.stat.size > 0
-        fail_msg: >
-          PROD pre-sync backup not found at
-          {{ sync_staging_dir }}/{{ prod_backup_filename }}.
-          If Phase 7 (Cleanup) already ran, the backup was removed.
-          Manual recovery from PBS daily backup is required.
-        success_msg: "Rollback backup found ({{ backup_file.stat.size | human_readable }})"
+    - name: "Display backup details"
+      ansible.builtin.debug:
+        msg: "Restoring from: {{ rollback_source }} ({{ backup_file.stat.size | human_readable }})"
 
     # ── Stop PROD Neo4j ───────────────────────────────────────────
     - name: "Stop {{ neo4j_service }} on PROD (VM-110)"
@@ -56,10 +91,16 @@
       register: svc_state
       failed_when: svc_state.status.ActiveState not in ["inactive", "failed"]
 
-    # ── Copy pre-sync backup to PROD ──────────────────────────────
-    - name: "Copy pre-sync backup to PROD /tmp"
+    # ── Remove any stale dump file ────────────────────────────────
+    - name: "Remove stale dump file (if present)"
+      ansible.builtin.file:
+        path: "{{ neo4j_data_dir }}/{{ neo4j_dump_filename }}"
+        state: absent
+
+    # ── Copy backup to PROD ───────────────────────────────────────
+    - name: "Copy backup to PROD /tmp"
       ansible.builtin.copy:
-        src: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+        src: "{{ rollback_source }}"
         dest: "/tmp/{{ neo4j_dump_filename }}"
         mode: '0644'
 
@@ -123,14 +164,13 @@
            ROLLBACK COMPLETE
           ═══════════════════════════════════════════════════════
 
-           PROD Neo4j has been restored to its pre-sync state.
-           The database now contains the data from BEFORE the
-           sync was attempted.
+           Restored from: {{ rollback_source }}
+           Backup size:   {{ backup_file.stat.size | human_readable }}
 
+           PROD Neo4j has been restored to its pre-sync state.
            Service is online and accepting connections.
 
            Next steps:
-             1. Verify PROD data via Semaphore UI or manual query
+             1. Verify PROD data via application or manual query
              2. Investigate what went wrong before retrying
-             3. Run "07 - Cleanup" when ready to remove temp files
           ═══════════════════════════════════════════════════════

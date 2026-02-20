@@ -1,0 +1,155 @@
+---
+# playbooks/neo4j-sync-full.yml
+#
+# Neo4j DEV → PROD Full Sync (Automated)
+# Semaphore Template: "Neo4j Sync - Full Run"
+#
+# Runs all sync phases in sequence with automated validation gates.
+# If any phase fails, Ansible halts immediately — no human review needed
+# between phases because every critical step has assertions.
+#
+# Phases executed:
+#   01-preflight   → Service health, baseline counts
+#   02-backup-prod → PROD dump (rollback safety net)
+#   03-dump-dev    → DEV dump (source data)
+#   04-transfer    → Copy DEV dump to PROD VM, checksum verify
+#   05-load-prod   → DESTRUCTIVE: replace PROD data with DEV
+#   06-validate    → Parity check (PROD must match DEV)
+#   archive        → Timestamp and archive all dumps for future rollback
+#
+# Backup naming convention:
+#   /opt/neo4j-sync/
+#     prod-pre-sync-20260220T130445.dump   ← PROD before sync
+#     dev-20260220T130445.dump             ← DEV data that was loaded
+#     baseline-20260220T130445.json        ← Node/rel counts snapshot
+#     prod-latest.dump                     ← Symlink to most recent PROD backup
+#
+# To rollback: Run "Neo4j Sync - Rollback" template in Semaphore.
+#   It uses prod-latest.dump from the archive automatically.
+#
+# Prerequisites:
+#   sudo mkdir -p /opt/neo4j-sync && sudo chown $(whoami) /opt/neo4j-sync
+#   (only needed once per controller — workstation or CT-315)
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 1: Pre-flight checks
+# ═══════════════════════════════════════════════════════════════════
+- import_playbook: neo4j-sync/01-preflight.yml
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 2: Back up PROD (rollback safety net)
+# ═══════════════════════════════════════════════════════════════════
+- import_playbook: neo4j-sync/02-backup-prod.yml
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 3: Dump DEV (source data)
+# ═══════════════════════════════════════════════════════════════════
+- import_playbook: neo4j-sync/03-dump-dev.yml
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 4: Transfer DEV dump to PROD VM
+# ═══════════════════════════════════════════════════════════════════
+- import_playbook: neo4j-sync/04-transfer.yml
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 5: Load DEV data into PROD (DESTRUCTIVE)
+# ═══════════════════════════════════════════════════════════════════
+- import_playbook: neo4j-sync/05-load-prod.yml
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 6: Validate sync (parity check)
+# ═══════════════════════════════════════════════════════════════════
+- import_playbook: neo4j-sync/06-validate.yml
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 7: Archive backups with timestamp (replaces cleanup)
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 7 — Archive Sync Backups"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    sync_staging_dir: /tmp/neo4j-sync
+    sync_archive_dir: /opt/neo4j-sync
+
+  tasks:
+    # ── Generate timestamp ────────────────────────────────────────
+    # iso8601_basic_short: "20260220T130445" — sortable, filesystem-safe
+    - name: "Generate archive timestamp"
+      ansible.builtin.set_fact:
+        sync_ts: "{{ ansible_date_time.iso8601_basic_short }}"
+
+    # ── Create archive directory ──────────────────────────────────
+    - name: "Ensure archive directory exists"
+      ansible.builtin.file:
+        path: "{{ sync_archive_dir }}"
+        state: directory
+        mode: '0750'
+
+    # ── Archive PROD pre-sync backup ──────────────────────────────
+    - name: "Archive PROD backup → prod-pre-sync-{{ sync_ts }}.dump"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/prod-pre-sync.dump"
+        dest: "{{ sync_archive_dir }}/prod-pre-sync-{{ sync_ts }}.dump"
+        remote_src: true
+        mode: '0640'
+
+    # ── Archive DEV dump ──────────────────────────────────────────
+    - name: "Archive DEV dump → dev-{{ sync_ts }}.dump"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/dev.dump"
+        dest: "{{ sync_archive_dir }}/dev-{{ sync_ts }}.dump"
+        remote_src: true
+        mode: '0640'
+
+    # ── Archive baseline counts ───────────────────────────────────
+    - name: "Archive baseline → baseline-{{ sync_ts }}.json"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/baseline.json"
+        dest: "{{ sync_archive_dir }}/baseline-{{ sync_ts }}.json"
+        remote_src: true
+        mode: '0640'
+
+    # ── Create "latest" symlink for rollback ──────────────────────
+    # rollback.yml reads this symlink to find the most recent backup.
+    - name: "Update prod-latest.dump symlink"
+      ansible.builtin.file:
+        src: "{{ sync_archive_dir }}/prod-pre-sync-{{ sync_ts }}.dump"
+        dest: "{{ sync_archive_dir }}/prod-latest.dump"
+        state: link
+        force: true
+
+    # ── Clean up staging directory ────────────────────────────────
+    - name: "Remove staging directory"
+      ansible.builtin.file:
+        path: "{{ sync_staging_dir }}"
+        state: absent
+
+    # ── List archive contents ─────────────────────────────────────
+    - name: "List archive directory"
+      ansible.builtin.find:
+        paths: "{{ sync_archive_dir }}"
+        file_type: any
+      register: archive_contents
+
+    # ── Final summary ─────────────────────────────────────────────
+    - name: "═══ NEO4J SYNC COMPLETE ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           ✓ NEO4J DEV → PROD SYNC COMPLETE
+          ═══════════════════════════════════════════════════════
+           Timestamp: {{ ansible_date_time.iso8601 }}
+
+           Archived to {{ sync_archive_dir }}:
+             prod-pre-sync-{{ sync_ts }}.dump  ← PROD before sync
+             dev-{{ sync_ts }}.dump            ← DEV data loaded
+             baseline-{{ sync_ts }}.json       ← Count snapshot
+             prod-latest.dump                  → symlink to latest
+
+           Archive contains {{ archive_contents.files | length }} file(s)
+
+           PROD Neo4j now matches DEV.
+           To rollback: Run "Neo4j Sync - Rollback" in Semaphore
+          ═══════════════════════════════════════════════════════
