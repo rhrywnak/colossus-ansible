@@ -1,0 +1,141 @@
+---
+# playbooks/verify-backups.yml
+#
+# PBS Backup Verification
+# Schedule: Daily 08:00 via Semaphore
+#
+# Verifies that all expected VM/CT backups have completed within
+# the last 26 hours (daily schedule + 2h grace window).
+#
+# How it works:
+#   - Runs on pve-1 (any Proxmox node works — tasks are cluster-wide)
+#   - Lists recent cluster tasks via pvesh (returns all types)
+#   - Filters to vzdump tasks with status "OK" within the time window
+#   - Checks that each expected VMID has at least one successful backup
+#   - Reports any missing or failed backups
+#
+# This playbook is read-only — it checks state but changes nothing.
+
+- name: "PBS Backup Verification"
+  hosts: pve-1
+  gather_facts: true
+  vars:
+    # All VMIDs that should have daily PBS backups.
+    # Must match group_vars/proxmox.yml pbs_backup_jobs.
+    expected_backups:
+      - { vmid: "110",  name: "colossus-prod-db1" }
+      - { vmid: "120",  name: "colossus-prod-app1" }
+      - { vmid: "210",  name: "colossus-dev-db1" }
+      - { vmid: "220",  name: "colossus-dev-app1" }
+      - { vmid: "311",  name: "pihole" }
+      - { vmid: "312",  name: "cloudflared" }
+      - { vmid: "313",  name: "traefik" }
+      - { vmid: "314",  name: "monitoring" }
+      - { vmid: "315",  name: "semaphore" }
+
+    # How far back to look (seconds). 26 hours = daily + 2h grace.
+    backup_window_seconds: 93600
+
+  tasks:
+    # ── Get all recent cluster tasks ──────────────────────────────
+    # pvesh doesn't support --typefilter or --limit on this endpoint.
+    # We get all tasks and filter in Ansible.
+    - name: "Query cluster tasks"
+      ansible.builtin.command: >
+        pvesh get /cluster/tasks --output-format json
+      register: cluster_tasks
+      changed_when: false
+
+    - name: "Parse task list"
+      ansible.builtin.set_fact:
+        all_tasks: "{{ cluster_tasks.stdout | from_json }}"
+
+    # ── Calculate time window ─────────────────────────────────────
+    - name: "Calculate cutoff timestamp"
+      ansible.builtin.set_fact:
+        cutoff_epoch: "{{ ansible_date_time.epoch | int - backup_window_seconds }}"
+
+    # ── Filter to recent successful vzdump tasks ──────────────────
+    # Fields from pvesh:
+    #   type: "vzdump"
+    #   id: "210" (the VMID, as a string)
+    #   status: "OK"
+    #   starttime: 1771477206 (epoch seconds)
+    - name: "Filter to recent successful backups"
+      ansible.builtin.set_fact:
+        backed_up_vmids: >-
+          {{
+            all_tasks
+            | selectattr('type', 'equalto', 'vzdump')
+            | selectattr('status', 'equalto', 'OK')
+            | selectattr('starttime', 'greaterthan', cutoff_epoch | int)
+            | map(attribute='id')
+            | unique
+            | list
+          }}
+
+    - name: "Display backed-up VMIDs found"
+      ansible.builtin.debug:
+        msg: "Recent successful backups for VMIDs: {{ backed_up_vmids | join(', ') }}"
+
+    # ── Check each expected VMID ──────────────────────────────────
+    - name: "Check backup status for {{ item.name }} (VMID {{ item.vmid }})"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.name }} ({{ item.vmid }}):
+          {{ '✓ Backup found in last 26h' if item.vmid in backed_up_vmids else '✗ NO RECENT BACKUP' }}
+      loop: "{{ expected_backups }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # ── Count results ─────────────────────────────────────────────
+    - name: "Calculate backup coverage"
+      ansible.builtin.set_fact:
+        backups_found: >-
+          {{
+            expected_backups
+            | selectattr('vmid', 'in', backed_up_vmids)
+            | list
+            | length
+          }}
+        backups_expected: "{{ expected_backups | length }}"
+        backups_missing: >-
+          {{
+            expected_backups
+            | rejectattr('vmid', 'in', backed_up_vmids)
+            | list
+          }}
+
+    # ── Assert all backups present ────────────────────────────────
+    - name: "GATE: Assert all expected backups completed"
+      ansible.builtin.assert:
+        that:
+          - backups_found | int == backups_expected | int
+        fail_msg: >
+          BACKUP VERIFICATION FAILED!
+          {{ backups_found }}/{{ backups_expected }} backups found.
+          Missing: {{ backups_missing | map(attribute='name') | join(', ') }}
+        success_msg: "All {{ backups_found }}/{{ backups_expected }} backups verified"
+
+    # ── Summary ───────────────────────────────────────────────────
+    - name: "═══ PBS BACKUP VERIFICATION SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           PBS BACKUP VERIFICATION — {{ ansible_date_time.iso8601 }}
+          ═══════════════════════════════════════════════════════
+
+           Window:     Last 26 hours
+           Expected:   {{ backups_expected }} backups
+           Found:      {{ backups_found }}
+           Status:     {{ '✓ ALL BACKUPS PRESENT' if (backups_found | int == backups_expected | int) else '✗ MISSING BACKUPS' }}
+          {% if backups_missing | length > 0 %}
+
+           MISSING BACKUPS:
+          {% for item in backups_missing %}
+             ✗ {{ item.name }} (VMID {{ item.vmid }})
+          {% endfor %}
+          {% endif %}
+
+          ═══════════════════════════════════════════════════════

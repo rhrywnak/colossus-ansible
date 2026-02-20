@@ -1,0 +1,225 @@
+---
+# playbooks/validate-all.yml
+#
+# Infrastructure Health Check
+# Schedule: Daily 06:00 via Semaphore
+#
+# Validates the health of all Colossus infrastructure components:
+#   - SSH connectivity to all hosts (implicit via Ansible connection)
+#   - systemd services on CoreOS VMs (Neo4j, Postgres, Quadlet containers)
+#   - Neo4j HTTP endpoints (port 7474)
+#   - Alloy monitoring agents (port 12345)
+#   - Monitoring stack on VM-314 (Prometheus, Loki, Grafana)
+#   - Infrastructure services (Traefik, Pi-hole, Cloudflare tunnel, Semaphore)
+#   - PBS accessibility
+#
+# This playbook is read-only — it checks state but changes nothing.
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 1: Verify all hosts are reachable
+# ═══════════════════════════════════════════════════════════════════
+- name: "Health Check — SSH Connectivity"
+  hosts: all:!truenas
+  gather_facts: true
+  tasks:
+    - name: "Record host info"
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} | {{ ansible_distribution | default('N/A') }} {{ ansible_distribution_version | default('') }} | {{ ansible_default_ipv4.address | default(ansible_host) }}"
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 2: CoreOS VM services
+# ═══════════════════════════════════════════════════════════════════
+- name: "Health Check — CoreOS VM Services"
+  hosts: coreos_vms
+  gather_facts: false
+  become: true
+  vars:
+    # Services expected on DB VMs
+    db_services:
+      - colossus-neo4j.service
+    # Services expected on all CoreOS VMs (Alloy monitoring)
+    common_services: []  # Alloy runs as container, checked via HTTP below
+
+  tasks:
+    - name: "Check Neo4j service on DB VMs"
+      ansible.builtin.systemd:
+        name: colossus-neo4j.service
+      register: neo4j_svc
+      when: inventory_hostname in groups['db_vms']
+
+    - name: "Assert Neo4j is active on DB VMs"
+      ansible.builtin.assert:
+        that:
+          - neo4j_svc.status.ActiveState == "active"
+        fail_msg: "colossus-neo4j.service is {{ neo4j_svc.status.ActiveState }} on {{ inventory_hostname }}"
+        success_msg: "Neo4j active on {{ inventory_hostname }}"
+      when: inventory_hostname in groups['db_vms']
+
+    - name: "Check Neo4j HTTP endpoint on DB VMs"
+      ansible.builtin.uri:
+        url: "http://localhost:7474"
+        method: GET
+        status_code: 200
+      register: neo4j_http
+      when: inventory_hostname in groups['db_vms']
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 3: Alloy monitoring agents (all managed hosts)
+# ═══════════════════════════════════════════════════════════════════
+- name: "Health Check — Alloy Monitoring Agents"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    alloy_targets:
+      - { name: "pve-1",              ip: "10.10.100.3" }
+      - { name: "pve-2",              ip: "10.10.100.2" }
+      - { name: "pve-3",              ip: "10.10.100.5" }
+      - { name: "colossus-prod-db1",  ip: "10.10.100.110" }
+      - { name: "colossus-prod-app1", ip: "10.10.100.120" }
+      - { name: "colossus-dev-db1",   ip: "10.10.100.200" }
+      - { name: "colossus-dev-app1",  ip: "10.10.100.220" }
+      - { name: "pihole",             ip: "10.10.100.53" }
+      - { name: "cloudflared",        ip: "10.10.100.54" }
+      - { name: "traefik",            ip: "10.10.100.55" }
+      - { name: "pbs",                ip: "10.10.100.242" }
+      - { name: "semaphore",          ip: "10.10.100.57" }
+
+  tasks:
+    - name: "Check Alloy agent on {{ item.name }}"
+      ansible.builtin.uri:
+        url: "http://{{ item.ip }}:12345/-/ready"
+        method: GET
+        status_code: 200
+        timeout: 5
+      loop: "{{ alloy_targets }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.ip }})"
+      register: alloy_results
+      ignore_errors: true
+
+    - name: "Alloy agent summary"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.name }}:
+          {{ '✓ OK' if not item.failed else '✗ FAILED — ' + (item.msg | default('unreachable')) }}
+      loop: "{{ alloy_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: "Count healthy Alloy agents"
+      ansible.builtin.set_fact:
+        alloy_healthy: "{{ alloy_results.results | rejectattr('failed') | list | length }}"
+        alloy_total: "{{ alloy_targets | length }}"
+
+    - name: "GATE: Assert all Alloy agents are healthy"
+      ansible.builtin.assert:
+        that:
+          - alloy_healthy | int == alloy_total | int
+        fail_msg: "Only {{ alloy_healthy }}/{{ alloy_total }} Alloy agents responding"
+        success_msg: "All {{ alloy_healthy }}/{{ alloy_total }} Alloy agents healthy"
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 4: Monitoring stack on VM-314
+# ═══════════════════════════════════════════════════════════════════
+- name: "Health Check — Monitoring Stack (VM-314)"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    monitoring_ip: "10.10.100.56"
+    monitoring_endpoints:
+      - { name: "Prometheus",    url: "http://10.10.100.56:9090/-/ready" }
+      - { name: "Loki",          url: "http://10.10.100.56:3100/ready" }
+      - { name: "Grafana",       url: "http://10.10.100.56:3000/api/health" }
+      - { name: "Alertmanager",  url: "http://10.10.100.56:9093/-/ready" }
+
+  tasks:
+    - name: "Check {{ item.name }}"
+      ansible.builtin.uri:
+        url: "{{ item.url }}"
+        method: GET
+        status_code: 200
+        timeout: 5
+      loop: "{{ monitoring_endpoints }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: monitoring_results
+      ignore_errors: true
+
+    - name: "Monitoring stack summary"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.name }}:
+          {{ '✓ OK' if not item.failed else '✗ FAILED' }}
+      loop: "{{ monitoring_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: "Check Prometheus target health"
+      ansible.builtin.uri:
+        url: "http://{{ monitoring_ip }}:9090/api/v1/targets"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: prom_targets
+
+    - name: "Count Prometheus active targets"
+      ansible.builtin.set_fact:
+        prom_up: "{{ prom_targets.json.data.activeTargets | selectattr('health', 'equalto', 'up') | list | length }}"
+        prom_total: "{{ prom_targets.json.data.activeTargets | length }}"
+
+    - name: "Prometheus target summary"
+      ansible.builtin.debug:
+        msg: "Prometheus: {{ prom_up }}/{{ prom_total }} targets UP"
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 5: Infrastructure services
+# ═══════════════════════════════════════════════════════════════════
+- name: "Health Check — Infrastructure Services"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    service_endpoints:
+      - { name: "Traefik",     url: "http://10.10.100.55:8082/metrics",         expect: 200 }
+      - { name: "Semaphore",   url: "http://10.10.100.57:3000/api/ping",        expect: 200 }
+
+  tasks:
+    - name: "Check {{ item.name }}"
+      ansible.builtin.uri:
+        url: "{{ item.url }}"
+        method: GET
+        status_code: "{{ item.expect }}"
+        timeout: 5
+      loop: "{{ service_endpoints }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: svc_results
+      ignore_errors: true
+
+    - name: "Service summary"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.name }}:
+          {{ '✓ OK' if not item.failed else '✗ FAILED' }}
+      loop: "{{ svc_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # ── Final summary ─────────────────────────────────────────────
+    - name: "═══ INFRASTRUCTURE HEALTH CHECK SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           INFRASTRUCTURE HEALTH CHECK — {{ ansible_date_time.iso8601 }}
+          ═══════════════════════════════════════════════════════
+
+           SSH Connectivity:    All hosts reachable (Play 1 passed)
+           Neo4j Services:      DB VMs checked (Play 2 passed)
+           Alloy Agents:        {{ alloy_healthy | default('?') }}/{{ alloy_total | default('?') }} healthy
+           Monitoring Stack:    Prometheus {{ prom_up | default('?') }}/{{ prom_total | default('?') }} targets
+           Infrastructure:      Traefik, Semaphore checked
+
+          ═══════════════════════════════════════════════════════

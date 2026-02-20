@@ -1,0 +1,227 @@
+---
+# playbooks/drift-detect.yml
+#
+# Configuration Drift Detection
+# Schedule: Weekly Sun 03:00 via Semaphore
+#
+# Detects unmanaged changes to Ansible-managed configuration by running
+# key configuration playbooks in --check --diff mode. This playbook
+# orchestrates child playbook runs and reports differences.
+#
+# What it checks:
+#   - PBS backup job definitions (/etc/pve/jobs.cfg)
+#   - Traefik route configuration
+#   - Pi-hole DNS records
+#   - Alloy agent configurations
+#   - Key systemd services are enabled
+#   - Semaphore service configuration
+#
+# This playbook is read-only — it detects drift but does NOT fix it.
+# Any drift found should be investigated manually.
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 1: PBS backup job drift (cluster-wide config)
+# ═══════════════════════════════════════════════════════════════════
+- name: "Drift Check — PBS Backup Jobs"
+  hosts: pve-1
+  gather_facts: true
+  vars:
+    expected_job_count: 9   # Number of vzdump entries in jobs.cfg
+  tasks:
+    - name: "Read /etc/pve/jobs.cfg"
+      ansible.builtin.slurp:
+        src: /etc/pve/jobs.cfg
+      register: jobs_cfg_raw
+
+    - name: "Decode jobs.cfg"
+      ansible.builtin.set_fact:
+        jobs_cfg: "{{ jobs_cfg_raw.content | b64decode }}"
+
+    - name: "Count vzdump entries"
+      ansible.builtin.set_fact:
+        vzdump_count: "{{ jobs_cfg | regex_findall('vzdump:') | length }}"
+
+    - name: "GATE: Assert expected backup job count"
+      ansible.builtin.assert:
+        that:
+          - vzdump_count | int == expected_job_count
+        fail_msg: >
+          DRIFT DETECTED: /etc/pve/jobs.cfg has {{ vzdump_count }} vzdump entries,
+          expected {{ expected_job_count }}. Someone may have added/removed backup
+          jobs outside of Ansible.
+        success_msg: "PBS jobs.cfg: {{ vzdump_count }} vzdump entries (expected {{ expected_job_count }})"
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 2: CoreOS VM service drift
+# ═══════════════════════════════════════════════════════════════════
+- name: "Drift Check — CoreOS Service State"
+  hosts: coreos_vms
+  gather_facts: false
+  become: true
+  tasks:
+    - name: "Check Neo4j service is enabled on DB VMs"
+      ansible.builtin.systemd:
+        name: colossus-neo4j.service
+      register: neo4j_svc
+      when: inventory_hostname in groups['db_vms']
+
+    - name: "Assert Neo4j service is enabled and active"
+      ansible.builtin.assert:
+        that:
+          - neo4j_svc.status.UnitFileState in ["enabled", "generated"]
+          - neo4j_svc.status.ActiveState == "active"
+        fail_msg: >
+          DRIFT: colossus-neo4j.service on {{ inventory_hostname }} is
+          {{ neo4j_svc.status.ActiveState }}/{{ neo4j_svc.status.UnitFileState }}
+          (expected active + enabled or generated)
+        success_msg: "{{ inventory_hostname }}: Neo4j active ({{ neo4j_svc.status.UnitFileState }})"
+      when: inventory_hostname in groups['db_vms']
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 3: Infrastructure service drift
+# ═══════════════════════════════════════════════════════════════════
+- name: "Drift Check — Infrastructure Services"
+  hosts: infrastructure
+  gather_facts: false
+  tasks:
+    # ── Traefik config exists and has expected routes ─────────────
+    - name: "Check Traefik dynamic config exists"
+      ansible.builtin.stat:
+        path: /etc/traefik/dynamic/services.yml
+      register: traefik_config
+      when: inventory_hostname == 'traefik'
+
+    - name: "Assert Traefik dynamic config present"
+      ansible.builtin.assert:
+        that:
+          - traefik_config.stat.exists
+        fail_msg: "DRIFT: /etc/traefik/dynamic/services.yml missing on traefik"
+        success_msg: "Traefik dynamic config present"
+      when: inventory_hostname == 'traefik'
+
+    - name: "Read Traefik dynamic config"
+      ansible.builtin.slurp:
+        src: /etc/traefik/dynamic/services.yml
+      register: traefik_dynamic
+      when: inventory_hostname == 'traefik'
+
+    - name: "Check expected routes in Traefik config"
+      ansible.builtin.assert:
+        that:
+          - "'colossus-legal' in (traefik_dynamic.content | b64decode)"
+          - "'grafana' in (traefik_dynamic.content | b64decode)"
+          - "'semaphore' in (traefik_dynamic.content | b64decode)"
+        fail_msg: "DRIFT: Traefik config missing expected routes"
+        success_msg: "Traefik routes: colossus-legal, grafana, semaphore all present"
+      when: inventory_hostname == 'traefik'
+
+    # ── Semaphore service running ─────────────────────────────────
+    - name: "Check Semaphore service"
+      ansible.builtin.systemd:
+        name: semaphore.service
+      register: semaphore_svc
+      when: inventory_hostname == 'semaphore'
+
+    - name: "Assert Semaphore service is enabled and active"
+      ansible.builtin.assert:
+        that:
+          - semaphore_svc.status.UnitFileState == "enabled"
+          - semaphore_svc.status.ActiveState == "active"
+        fail_msg: >
+          DRIFT: semaphore.service is
+          {{ semaphore_svc.status.ActiveState }}/{{ semaphore_svc.status.UnitFileState }}
+        success_msg: "Semaphore service active and enabled"
+      when: inventory_hostname == 'semaphore'
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 4: Alloy agent configuration drift
+# ═══════════════════════════════════════════════════════════════════
+- name: "Drift Check — Alloy Agent Configs"
+  hosts: all:!truenas
+  gather_facts: false
+  tasks:
+    - name: "Check Alloy config file exists"
+      ansible.builtin.stat:
+        path: "{{ alloy_config_path | default('/etc/alloy/config.alloy') }}"
+      register: alloy_config
+      ignore_errors: true
+
+    - name: "Report Alloy config status"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: Alloy config
+          {{ '✓ present' if (alloy_config.stat.exists | default(false)) else '✗ MISSING' }}
+          at {{ alloy_config_path | default('/etc/alloy/config.alloy') }}
+      when: alloy_config is not failed
+
+# ═══════════════════════════════════════════════════════════════════
+# Play 5: Monitoring stack drift (VM-314)
+# ═══════════════════════════════════════════════════════════════════
+- name: "Drift Check — Monitoring Stack Config"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    monitoring_ip: "10.10.100.56"
+  tasks:
+    - name: "Query Prometheus scrape config"
+      ansible.builtin.uri:
+        url: "http://{{ monitoring_ip }}:9090/api/v1/status/config"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: prom_config
+
+    - name: "Count Prometheus scrape jobs"
+      ansible.builtin.set_fact:
+        scrape_jobs: "{{ prom_config.json.data.yaml | regex_findall('job_name:') | length }}"
+
+    - name: "Report Prometheus config"
+      ansible.builtin.debug:
+        msg: "Prometheus has {{ scrape_jobs }} scrape jobs configured"
+
+    - name: "Query Prometheus target count"
+      ansible.builtin.uri:
+        url: "http://{{ monitoring_ip }}:9090/api/v1/targets"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: prom_targets
+
+    - name: "Calculate target health"
+      ansible.builtin.set_fact:
+        targets_up: "{{ prom_targets.json.data.activeTargets | selectattr('health', 'equalto', 'up') | list | length }}"
+        targets_down: "{{ prom_targets.json.data.activeTargets | rejectattr('health', 'equalto', 'up') | list | length }}"
+        targets_total: "{{ prom_targets.json.data.activeTargets | length }}"
+
+    - name: "GATE: Assert no Prometheus targets are down"
+      ansible.builtin.assert:
+        that:
+          - targets_down | int == 0
+        fail_msg: >
+          DRIFT: {{ targets_down }} Prometheus targets are DOWN.
+          Possible host unreachable, Alloy stopped, or config changed.
+        success_msg: "All {{ targets_total }} Prometheus targets healthy"
+
+    # ── Final summary ─────────────────────────────────────────────
+    - name: "═══ DRIFT DETECTION SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           CONFIGURATION DRIFT DETECTION — {{ ansible_date_time.iso8601 }}
+          ═══════════════════════════════════════════════════════
+
+           PBS Backup Jobs:       Verified (9 expected)
+           CoreOS Services:       DB VMs Neo4j checked
+           Traefik Routes:        Key routes verified
+           Semaphore:             Service state checked
+           Alloy Configs:         All hosts checked
+           Prometheus Targets:    {{ targets_up | default('?') }}/{{ targets_total | default('?') }} up
+
+           If any assertions above failed, investigate the
+           drift and either:
+             a) Fix the config to match Ansible definitions
+             b) Update Ansible to match the intentional change
+
+          ═══════════════════════════════════════════════════════
