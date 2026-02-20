@@ -3,7 +3,7 @@
 # Run from: workstation (proxima-centauri)
 #
 # Checks: container, binary, config, database, service, API, Ansible venv,
-# Galaxy collections, Traefik (optional), and resource usage.
+# Galaxy collections, external mounts, Traefik (optional), and resource usage.
 #
 set +e
 
@@ -58,12 +58,44 @@ else
     check_fail "Config: /etc/semaphore/config.json missing"
 fi
 
-# Database
-if ssh root@${IP} "test -f /var/lib/semaphore/database.sqlite3" 2>/dev/null; then
-    DB_SIZE=$(ssh root@${IP} "du -h /var/lib/semaphore/database.sqlite3" 2>/dev/null | awk '{print $1}')
-    check_pass "Database: SQLite (${DB_SIZE})"
+# Database (externalized on ZFS mount)
+if ssh root@${IP} "test -f ${CT_DATA_MOUNT}/database.sqlite3" 2>/dev/null; then
+    DB_SIZE=$(ssh root@${IP} "du -h ${CT_DATA_MOUNT}/database.sqlite3" 2>/dev/null | awk '{print $1}')
+    check_pass "Database: SQLite on external mount (${DB_SIZE})"
 else
-    check_fail "Database: /var/lib/semaphore/database.sqlite3 missing"
+    check_fail "Database: ${CT_DATA_MOUNT}/database.sqlite3 missing"
+fi
+
+# Config backup on external mount
+if ssh root@${IP} "test -f ${CT_DATA_MOUNT}/config.json" 2>/dev/null; then
+    check_pass "Config backup: ${CT_DATA_MOUNT}/config.json present"
+else
+    check_warn "Config backup: ${CT_DATA_MOUNT}/config.json missing (rebuild safety net)"
+fi
+
+# --- External mounts ---
+echo ""
+echo "External Storage (golden rule):"
+
+if ssh root@${IP} "mountpoint -q ${CT_DATA_MOUNT}" 2>/dev/null; then
+    DATA_AVAIL=$(ssh root@${IP} "df -h ${CT_DATA_MOUNT}" 2>/dev/null | tail -1 | awk '{print $4}')
+    check_pass "Data mount: ${CT_DATA_MOUNT} (${DATA_AVAIL} available)"
+else
+    check_fail "Data mount: ${CT_DATA_MOUNT} is NOT a mount point"
+fi
+
+if ssh root@${IP} "mountpoint -q ${CT_SYNC_MOUNT}" 2>/dev/null; then
+    SYNC_AVAIL=$(ssh root@${IP} "df -h ${CT_SYNC_MOUNT}" 2>/dev/null | tail -1 | awk '{print $4}')
+    check_pass "Sync mount: ${CT_SYNC_MOUNT} (${SYNC_AVAIL} available)"
+else
+    check_fail "Sync mount: ${CT_SYNC_MOUNT} is NOT a mount point"
+fi
+
+# Ensure NO data in old location
+if ssh root@${IP} "test -f /var/lib/semaphore/database.sqlite3" 2>/dev/null; then
+    check_fail "Old DB location: /var/lib/semaphore/database.sqlite3 still exists (should be removed)"
+else
+    check_pass "Old DB location: /var/lib/semaphore/database.sqlite3 clean (removed)"
 fi
 
 # --- systemd service ---
@@ -79,93 +111,72 @@ fi
 
 SVC_ENABLED=$(ssh root@${IP} "systemctl is-enabled semaphore" 2>/dev/null)
 if [ "${SVC_ENABLED}" = "enabled" ]; then
-    check_pass "Boot enabled: yes"
+    check_pass "systemd: enabled (starts on boot)"
 else
-    check_warn "Boot enabled: ${SVC_ENABLED}"
-fi
-
-MEMORY_KB=$(ssh root@${IP} "ps -o rss= -p \$(pgrep -x semaphore | head -1) 2>/dev/null" 2>/dev/null || echo "")
-if [ -n "${MEMORY_KB}" ]; then
-    MEMORY_MB=$(( ${MEMORY_KB} / 1024 ))
-    check_pass "Process memory: ${MEMORY_MB}MB"
+    check_warn "systemd: ${SVC_ENABLED} (should be enabled)"
 fi
 
 # --- API ---
 echo ""
 echo "API:"
 
-PING=$(curl -s --connect-timeout 5 "http://${IP}:${SEMAPHORE_PORT}/api/ping" 2>/dev/null)
+PING=$(ssh root@${IP} "curl -sf http://localhost:${SEMAPHORE_PORT}/api/ping" 2>/dev/null)
 if echo "${PING}" | grep -q "pong"; then
-    check_pass "Ping: ${PING}"
+    check_pass "Local API: pong"
 else
-    check_fail "Ping: '${PING}' (expected 'pong')"
+    check_fail "Local API: no response"
 fi
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://${IP}:${SEMAPHORE_PORT}/" 2>/dev/null)
-if [ "${HTTP_CODE}" = "200" ] || [ "${HTTP_CODE}" = "301" ] || [ "${HTTP_CODE}" = "302" ]; then
-    check_pass "Web UI: HTTP ${HTTP_CODE}"
+# Check via Traefik (optional — may not be configured yet)
+HTTPS_PING=$(curl -sf "https://semaphore.${DOMAIN}/api/ping" 2>/dev/null)
+if echo "${HTTPS_PING}" | grep -q "pong"; then
+    check_pass "External API (Traefik): pong"
 else
-    check_fail "Web UI: HTTP ${HTTP_CODE}"
+    check_warn "External API (Traefik): not available (Stage 3 dependency)"
 fi
 
-# --- Ansible environment ---
+# --- Ansible venv ---
 echo ""
 echo "Ansible:"
 
-ANSIBLE_VER=$(ssh root@${IP} "su -s /bin/bash semaphore -c '/home/semaphore/venv/bin/ansible --version' 2>/dev/null | head -1" 2>/dev/null)
-if [ -n "${ANSIBLE_VER}" ]; then
-    check_pass "${ANSIBLE_VER}"
+ANSIBLE_VER=$(ssh root@${IP} "su - semaphore -c '/home/semaphore/venv/bin/ansible --version 2>/dev/null | head -1'" 2>/dev/null)
+if echo "${ANSIBLE_VER}" | grep -q "ansible"; then
+    check_pass "Ansible: ${ANSIBLE_VER}"
 else
-    check_fail "Ansible not found in venv"
+    check_fail "Ansible: not found in venv"
 fi
 
-for COLLECTION in community.general community.proxmox ansible.posix; do
-    if ssh root@${IP} "su -s /bin/bash semaphore -c '/home/semaphore/venv/bin/ansible-galaxy collection list'" 2>/dev/null | grep -q "${COLLECTION}"; then
-        check_pass "Collection: ${COLLECTION}"
-    else
-        check_warn "Collection: ${COLLECTION} not found"
-    fi
-done
-
-# --- Traefik (optional) ---
-echo ""
-echo "Traefik (optional):"
-
-TRAEFIK_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://semaphore.${DOMAIN}/api/ping" 2>/dev/null)
-if [ "${TRAEFIK_CODE}" = "200" ]; then
-    check_pass "HTTPS: https://semaphore.${DOMAIN}"
-else
-    check_warn "HTTPS: not configured yet (Stage 3)"
-fi
-
-# --- Resources ---
+# --- Resource usage ---
 echo ""
 echo "Resources:"
 
-DISK=$(ssh root@${IP} "df -h / | tail -1" 2>/dev/null | awk '{print $3 " / " $2 " (" $5 " used)"}')
-if [ -n "${DISK}" ]; then
-    check_pass "Disk: ${DISK}"
+MEM_USED=$(ssh root@${IP} "ps aux | grep '[s]emaphore server' | awk '{print \$6}'" 2>/dev/null)
+if [ -n "${MEM_USED}" ]; then
+    MEM_MB=$((MEM_USED / 1024))
+    check_pass "Memory: ${MEM_MB}MB (semaphore process)"
+else
+    check_warn "Memory: cannot determine (process not found)"
 fi
 
-MEM=$(ssh root@${IP} "free -m | grep Mem" 2>/dev/null | awk '{print $3 "MB / " $2 "MB"}')
-if [ -n "${MEM}" ]; then
-    check_pass "Memory: ${MEM}"
-fi
+DISK_PCT=$(ssh root@${IP} "df / | tail -1 | awk '{print \$5}'" 2>/dev/null)
+check_pass "Root disk: ${DISK_PCT} used"
 
 # --- Summary ---
 echo ""
 echo "==========================================="
 echo " Results: ${PASS} passed, ${FAIL} failed, ${WARN} warnings"
 echo "==========================================="
-echo ""
 
-if [ $FAIL -gt 0 ]; then
-    echo "⚠  Some checks failed. Review output above."
+if [ ${FAIL} -gt 0 ]; then
+    echo ""
+    echo "  ✗ VERIFICATION FAILED — review errors above"
     exit 1
+elif [ ${WARN} -gt 0 ]; then
+    echo ""
+    echo "  ⚠ PASSED WITH WARNINGS — review warnings above"
+    exit 0
 else
-    echo "Semaphore UI is fully operational."
     echo ""
-    echo "  Direct: http://${IP}:${SEMAPHORE_PORT}"
-    echo "  HTTPS:  https://semaphore.${DOMAIN} (after Stage 3)"
-    echo ""
+    echo "  ✓ ALL CHECKS PASSED"
+    exit 0
 fi

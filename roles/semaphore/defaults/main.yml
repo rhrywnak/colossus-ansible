@@ -10,18 +10,25 @@ semaphore_user: semaphore
 semaphore_group: semaphore
 semaphore_home: /home/semaphore
 
-# Paths
+# Paths — application binaries and config
 semaphore_config_dir: /etc/semaphore
-semaphore_data_dir: /var/lib/semaphore
 semaphore_venv_dir: "{{ semaphore_home }}/venv"
+
+# Paths — externalized data (bind-mounted ZFS datasets)
+# These are mount points from pve-3 ZFS datasets, NOT local container storage.
+# Golden rule: no persistent data inside container rootfs.
+#   /mnt/data       → pbs-zfs/services/semaphore/data (SQLite DB, config backup, tmp)
+#   /opt/neo4j-sync → pbs-zfs/services/semaphore/sync (Neo4j sync archive)
+semaphore_data_dir: /mnt/data
+semaphore_sync_dir: /opt/neo4j-sync
+
+# Database (SQLite on externalized storage)
+semaphore_db_dialect: "sqlite"
+semaphore_db_path: "{{ semaphore_data_dir }}/database.sqlite3"
 
 # Network
 semaphore_port: 3000
 semaphore_web_host: "https://semaphore.cogmai.com"
-
-# Database (SQLite initially — migrate to PostgreSQL later if needed)
-semaphore_db_dialect: "sqlite"
-semaphore_db_path: "{{ semaphore_data_dir }}/database.sqlite3"
 
 # Ansible settings
 semaphore_max_parallel_tasks: 2

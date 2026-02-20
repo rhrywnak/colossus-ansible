@@ -8,6 +8,9 @@
 #   - Ansible connects as root (per infrastructure group_vars)
 #   - Service user tasks use become_method: su (no sudo needed)
 #   - Internet access available (GitHub downloads, pip, Galaxy)
+#   - ZFS bind mounts already configured by 01-create.sh:
+#       /mnt/data       → pbs-zfs/services/semaphore/data (SQLite, config, tmp)
+#       /opt/neo4j-sync → pbs-zfs/services/semaphore/sync (sync archive)
 #
 # Idempotent: safe to re-run. Config is only written on first deploy.
 
@@ -43,18 +46,50 @@
     create_home: true
 
 # --- Directories ---
+# NOTE: semaphore_data_dir (/mnt/data) and semaphore_sync_dir (/opt/neo4j-sync)
+# are ZFS bind mounts created by scripts/semaphore/01-create.sh with correct
+# ownership set from the pve-3 host. Do NOT try to chown them here — it will
+# fail in unprivileged containers.
 
-- name: Create data and config directories
+- name: Create config directory (inside rootfs — OK, not persistent data)
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ semaphore_config_dir }}"
     state: directory
     owner: "{{ semaphore_user }}"
     group: "{{ semaphore_group }}"
     mode: "0755"
-  loop:
-    - "{{ semaphore_config_dir }}"
-    - "{{ semaphore_data_dir }}"
-    - "{{ semaphore_data_dir }}/tmp"
+
+- name: Verify external data mount is available
+  ansible.builtin.stat:
+    path: "{{ semaphore_data_dir }}"
+  register: data_mount
+
+- name: Assert external data mount exists
+  ansible.builtin.assert:
+    that:
+      - data_mount.stat.exists
+      - data_mount.stat.isdir
+    fail_msg: >
+      External data mount {{ semaphore_data_dir }} is not available.
+      Ensure ZFS datasets and bind mounts are configured via 01-create.sh
+      before running this playbook.
+    success_msg: "External data mount {{ semaphore_data_dir }} is available"
+
+- name: Verify external sync mount is available
+  ansible.builtin.stat:
+    path: "{{ semaphore_sync_dir }}"
+  register: sync_mount
+
+- name: Assert external sync mount exists
+  ansible.builtin.assert:
+    that:
+      - sync_mount.stat.exists
+      - sync_mount.stat.isdir
+    fail_msg: >
+      External sync mount {{ semaphore_sync_dir }} is not available.
+      Ensure ZFS datasets and bind mounts are configured via 01-create.sh
+      before running this playbook.
+    success_msg: "External sync mount {{ semaphore_sync_dir }} is available"
 
 # --- Python Virtual Environment & Ansible ---
 # All venv tasks run as the semaphore user via su (not sudo)
@@ -153,8 +188,31 @@
 # --- Configuration ---
 # config.json contains generated secrets — only created on first deploy.
 # Subsequent runs preserve existing config (secrets are not regenerable).
+# Config lives in /etc/semaphore/ (rootfs) but is also backed up to /mnt/data/.
 
 - name: Check if config.json already exists
+  ansible.builtin.stat:
+    path: "{{ semaphore_config_dir }}/config.json"
+  register: config_exists
+
+- name: Check if config.json exists on external mount (rebuild scenario)
+  ansible.builtin.stat:
+    path: "{{ semaphore_data_dir }}/config.json"
+  register: config_on_mount
+
+- name: Restore config.json from external mount (rebuild scenario)
+  ansible.builtin.copy:
+    src: "{{ semaphore_data_dir }}/config.json"
+    dest: "{{ semaphore_config_dir }}/config.json"
+    remote_src: true
+    owner: "{{ semaphore_user }}"
+    group: "{{ semaphore_group }}"
+    mode: "0600"
+  when:
+    - not config_exists.stat.exists
+    - config_on_mount.stat.exists
+
+- name: Re-check config existence after potential restore
   ansible.builtin.stat:
     path: "{{ semaphore_config_dir }}/config.json"
   register: config_exists
@@ -195,6 +253,13 @@
     path: "{{ semaphore_config_dir }}/config.json"
     owner: "{{ semaphore_user }}"
     group: "{{ semaphore_group }}"
+    mode: "0600"
+
+- name: Backup config.json to external mount
+  ansible.builtin.copy:
+    src: "{{ semaphore_config_dir }}/config.json"
+    dest: "{{ semaphore_data_dir }}/config.json"
+    remote_src: true
     mode: "0600"
 
 # --- Database Migration ---
@@ -272,3 +337,12 @@
       - "'pong' in ping_check.content"
     fail_msg: "Semaphore API is not responding correctly"
     success_msg: "Semaphore UI v{{ semaphore_version }} is running on port {{ semaphore_port }} — API responding"
+
+- name: Display storage configuration
+  ansible.builtin.debug:
+    msg: |
+      Semaphore storage (externalized):
+        Database: {{ semaphore_db_path }}
+        Tmp:      {{ semaphore_data_dir }}/tmp
+        Config:   {{ semaphore_config_dir }}/config.json (backup at {{ semaphore_data_dir }}/config.json)
+        Sync:     {{ semaphore_sync_dir }}
