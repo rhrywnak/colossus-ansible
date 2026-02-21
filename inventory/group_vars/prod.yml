@@ -13,4 +13,5 @@ colossus_legal_rust_log: "warn"
 colossus_legal_document_path: "/data/documents"
 
 # ── Colossus-Legal: Frontend ─────────────────────────────────
-colossus_legal_api_url: "http://{{ ansible_host }}:3403"
+colossus_legal_api_url: "https://colossus-legal-api.cogmai.com"
+colossus_legal_cors_origins: "https://colossus-legal.cogmai.com,http://localhost:5473"
