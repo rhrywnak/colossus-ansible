@@ -4,19 +4,23 @@
 # Deploy an application to target environment.
 #
 # Usage:
-#   # Deploy to DEV
+#   # Deploy to DEV (workstation)
 #   ansible-playbook playbooks/deploy-app.yml \
 #     -e app=colossus-legal \
 #     -e version=v1.0.0 \
-#     -l dev \
-#     --ask-vault-pass
+#     -l colossus-dev-app1 \
+#     --vault-password-file ~/.vault_pass
 #
-#   # Deploy to PROD
+#   # Deploy to PROD (workstation — interactive confirmation)
 #   ansible-playbook playbooks/deploy-app.yml \
 #     -e app=colossus-legal \
 #     -e version=v1.0.0 \
-#     -l prod \
-#     --ask-vault-pass
+#     -l colossus-prod-app1 \
+#     --vault-password-file ~/.vault_pass
+#
+#   # Deploy to PROD (Semaphore — skip interactive pause)
+#   # Set extra vars: app=colossus-legal version=v1.0.0 confirm_prod=true
+#   # Semaphore's "Run" button is the human confirmation gate.
 
 - name: "Deploy {{ app }} {{ version }}"
   hosts: app_vms
@@ -37,7 +41,9 @@
         prompt: >
           ⚠️  You are deploying {{ app }} {{ version }} to PRODUCTION.
           Press Enter to continue or Ctrl+C to abort.
-      when: "'prod' in group_names"
+      when:
+        - "'prod' in group_names"
+        - not (confirm_prod | default(false) | bool)
       run_once: true
 
   roles:
