@@ -67,6 +67,7 @@
     username: "{{ vault_ghcr_username }}"
     password: "{{ vault_ghcr_token }}"
   no_log: true
+  ignore_errors: true
 
 # ── Step 3: Pull container images ────────────────────────────
 

@@ -2,13 +2,30 @@
 # build-release.sh — Build and push Colossus-Legal container images
 #
 # Usage:
-#   ./scripts/build-release.sh v1.0.0
-#   ./scripts/build-release.sh v1.0.0 --no-push   # Build only, don't push
+#   ./scripts/build-release.sh v0.2.0
+#   ./scripts/build-release.sh v0.2.0 --no-push   # Build only, don't push
 #
 # Prerequisites:
 #   - Podman installed
 #   - Logged in to ghcr.io: podman login ghcr.io
-#   - Source code available at COLOSSUS_LEGAL_SRC (or default path)
+#   - Source code available at COLOSSUS_LEGAL_SRC (or default ~/Projects/colossus-legal)
+#
+# Project layout expected:
+#   colossus-legal/
+#   ├── backend/
+#   │   ├── Dockerfile          # Multi-stage: rust:1.84 → debian:bookworm-slim
+#   │   ├── Cargo.toml
+#   │   ├── Cargo.lock
+#   │   └── src/
+#   └── frontend/
+#       ├── Dockerfile          # Multi-stage: node:20 → nginx:1.27
+#       ├── docker-entrypoint.sh
+#       ├── nginx.conf
+#       ├── package.json
+#       ├── package-lock.json
+#       └── src/
+#
+# Each Dockerfile expects its own component directory as the build context.
 
 set -euo pipefail
 
@@ -16,23 +33,21 @@ set -euo pipefail
 VERSION="${1:?Usage: $0 <version> [--no-push]}"
 NO_PUSH="${2:-}"
 
-# CHANGE THESE to match your setup
-REGISTRY="ghcr.io/GITHUB_USERNAME"
+REGISTRY="ghcr.io/rhrywnak"
 COLOSSUS_LEGAL_SRC="${COLOSSUS_LEGAL_SRC:-${HOME}/Projects/colossus-legal}"
 
-# Image names
 BACKEND_IMAGE="${REGISTRY}/colossus-backend"
 FRONTEND_IMAGE="${REGISTRY}/colossus-frontend"
 
 # ── Validation ───────────────────────────────────────────────
-if [[ ! -d "${COLOSSUS_LEGAL_SRC}/backend" ]]; then
-    echo "ERROR: Cannot find backend source at ${COLOSSUS_LEGAL_SRC}/backend"
+if [[ ! -f "${COLOSSUS_LEGAL_SRC}/backend/Dockerfile" ]]; then
+    echo "ERROR: Cannot find ${COLOSSUS_LEGAL_SRC}/backend/Dockerfile"
     echo "Set COLOSSUS_LEGAL_SRC to your colossus-legal repo root."
     exit 1
 fi
 
-if [[ ! -d "${COLOSSUS_LEGAL_SRC}/frontend" ]]; then
-    echo "ERROR: Cannot find frontend source at ${COLOSSUS_LEGAL_SRC}/frontend"
+if [[ ! -f "${COLOSSUS_LEGAL_SRC}/frontend/Dockerfile" ]]; then
+    echo "ERROR: Cannot find ${COLOSSUS_LEGAL_SRC}/frontend/Dockerfile"
     exit 1
 fi
 
@@ -43,15 +58,13 @@ echo " Registry: ${REGISTRY}"
 echo "============================================"
 echo ""
 
-cd "${COLOSSUS_LEGAL_SRC}"
-
 # ── Build Backend ────────────────────────────────────────────
 echo "== Building backend =="
 podman build \
-    -f deploy/docker/Dockerfile.backend \
+    -f "${COLOSSUS_LEGAL_SRC}/backend/Dockerfile" \
     -t "${BACKEND_IMAGE}:${VERSION}" \
     -t "${BACKEND_IMAGE}:latest" \
-    .
+    "${COLOSSUS_LEGAL_SRC}/backend"
 echo "  ✓ ${BACKEND_IMAGE}:${VERSION}"
 
 # ── Build Frontend ───────────────────────────────────────────
@@ -60,10 +73,10 @@ echo "  ✓ ${BACKEND_IMAGE}:${VERSION}"
 echo ""
 echo "== Building frontend =="
 podman build \
-    -f deploy/docker/Dockerfile.frontend \
+    -f "${COLOSSUS_LEGAL_SRC}/frontend/Dockerfile" \
     -t "${FRONTEND_IMAGE}:${VERSION}" \
     -t "${FRONTEND_IMAGE}:latest" \
-    .
+    "${COLOSSUS_LEGAL_SRC}/frontend"
 echo "  ✓ ${FRONTEND_IMAGE}:${VERSION}"
 
 # ── Push to Registry ─────────────────────────────────────────

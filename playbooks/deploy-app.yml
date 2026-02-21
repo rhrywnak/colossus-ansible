@@ -20,6 +20,7 @@
 
 - name: "Deploy {{ app }} {{ version }}"
   hosts: app_vms
+  become: true
   gather_facts: true
 
   pre_tasks:
