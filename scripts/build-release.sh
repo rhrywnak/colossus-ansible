@@ -26,6 +26,9 @@
 #       └── src/
 #
 # Each Dockerfile expects its own component directory as the build context.
+#
+# NOTE: --no-cache is used on all builds to prevent Podman from serving
+# stale layers. Without this, code changes may not appear in the image.
 
 set -euo pipefail
 
@@ -51,6 +54,20 @@ if [[ ! -f "${COLOSSUS_LEGAL_SRC}/frontend/Dockerfile" ]]; then
     exit 1
 fi
 
+# ── Ensure source is up to date ──────────────────────────────
+echo "== Checking source repo =="
+cd "${COLOSSUS_LEGAL_SRC}"
+CURRENT_BRANCH=$(git branch --show-current)
+echo "  Branch: ${CURRENT_BRANCH}"
+echo "  Latest commit: $(git log --oneline -1)"
+
+# Warn if there are uncommitted changes
+if ! git diff --quiet HEAD 2>/dev/null; then
+    echo "  ⚠ WARNING: Uncommitted changes detected in ${COLOSSUS_LEGAL_SRC}"
+    echo "  The build will use the working tree as-is."
+fi
+echo ""
+
 echo "============================================"
 echo " Building Colossus-Legal ${VERSION}"
 echo " Source: ${COLOSSUS_LEGAL_SRC}"
@@ -59,8 +76,9 @@ echo "============================================"
 echo ""
 
 # ── Build Backend ────────────────────────────────────────────
-echo "== Building backend =="
+echo "== Building backend (--no-cache) =="
 podman build \
+    --no-cache \
     -f "${COLOSSUS_LEGAL_SRC}/backend/Dockerfile" \
     -t "${BACKEND_IMAGE}:${VERSION}" \
     -t "${BACKEND_IMAGE}:latest" \
@@ -71,8 +89,9 @@ echo "  ✓ ${BACKEND_IMAGE}:${VERSION}"
 # NOTE: No VITE_API_URL build arg needed!
 # The API URL is injected at runtime via config.js (Ansible writes this).
 echo ""
-echo "== Building frontend =="
+echo "== Building frontend (--no-cache) =="
 podman build \
+    --no-cache \
     -f "${COLOSSUS_LEGAL_SRC}/frontend/Dockerfile" \
     -t "${FRONTEND_IMAGE}:${VERSION}" \
     -t "${FRONTEND_IMAGE}:latest" \
@@ -102,16 +121,8 @@ echo " Images:"
 echo "   ${BACKEND_IMAGE}:${VERSION}"
 echo "   ${FRONTEND_IMAGE}:${VERSION}"
 echo ""
-echo " Next steps:"
-echo "   # Deploy to DEV:"
-echo "   ansible-playbook playbooks/deploy-app.yml \\"
-echo "     -e app=colossus-legal \\"
-echo "     -e version=${VERSION} \\"
-echo "     -l dev --ask-vault-pass"
-echo ""
-echo "   # After validation, deploy to PROD:"
-echo "   ansible-playbook playbooks/deploy-app.yml \\"
-echo "     -e app=colossus-legal \\"
-echo "     -e version=${VERSION} \\"
-echo "     -l prod --ask-vault-pass"
+echo " Deploy via Semaphore:"
+echo "   1. Run 'Deploy Colossus-Legal — DEV' → version: ${VERSION}"
+echo "   2. Validate DEV"
+echo "   3. Run 'Deploy Colossus-Legal — PROD' → version: ${VERSION}"
 echo "============================================"
