@@ -9,6 +9,7 @@ prod_db_host: 10.10.100.110       # VM-110 (colossus-prod-db1)
 # ── Colossus-Legal: Backend ──────────────────────────────────
 colossus_legal_neo4j_uri: "bolt://{{ prod_db_host }}:7687"
 colossus_legal_neo4j_user: "neo4j"
+colossus_legal_qdrant_url: "http://{{ prod_db_host }}:6333"
 colossus_legal_rust_log: "warn"
 colossus_legal_document_path: "/data/documents"
 

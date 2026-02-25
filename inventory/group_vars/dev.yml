@@ -9,6 +9,7 @@ dev_db_host: 10.10.100.200        # VM-210 (colossus-dev-db1)
 # ── Colossus-Legal: Backend ──────────────────────────────────
 colossus_legal_neo4j_uri: "bolt://{{ dev_db_host }}:7687"
 colossus_legal_neo4j_user: "neo4j"
+colossus_legal_qdrant_url: "http://{{ dev_db_host }}:6333"
 colossus_legal_rust_log: "debug"
 colossus_legal_document_path: "/data/documents"
 
