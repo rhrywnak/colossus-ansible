@@ -1,0 +1,33 @@
+---
+# authentik-config/tasks/users.yml
+#
+# Creates users with group membership and sets initial passwords.
+# Passwords are only set on initial creation — existing users are
+# not modified (users manage their own passwords after first login).
+#
+# Group membership is enforced on every run via the groups field
+# on user creation. For existing users, group updates require
+# separate API calls (future enhancement).
+
+# Re-fetch groups to get current UUIDs (may have been just created)
+- name: "Fetch groups for UUID resolution"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/groups/?page_size=100"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+  register: groups_for_users
+  changed_when: false
+  check_mode: false
+
+- name: "Build group name→UUID lookup"
+  ansible.builtin.set_fact:
+    group_uuid_map: >-
+      {{ dict(groups_for_users.json.results | map(attribute='name')
+              | zip(groups_for_users.json.results | map(attribute='pk'))) }}
+
+- name: "Process each user"
+  ansible.builtin.include_tasks: _create_user.yml
+  loop: "{{ authentik_users }}"
+  loop_control:
+    loop_var: user_def
+    label: "{{ user_def.username }}"

@@ -1,0 +1,22 @@
+---
+# configure-authentik.yml — Configure Authentik via REST API
+#
+# Creates/updates all Authentik resources: brand, provider, application,
+# outpost binding, groups, and users. Declarative and idempotent.
+#
+# Prerequisites:
+#   - VM-316 running with Authentik containers healthy
+#   - akadmin initial setup completed via browser
+#   - API token created and stored in vault (vault_authentik_api_token)
+#
+# Usage:
+#   ansible-playbook playbooks/configure-authentik.yml --check        # dry-run
+#   ansible-playbook playbooks/configure-authentik.yml                 # execute
+#   ansible-playbook playbooks/configure-authentik.yml --diff --check  # dry-run with diff
+
+- name: "Configure Authentik identity provider"
+  hosts: authentik
+  gather_facts: false
+  connection: local
+  roles:
+    - authentik-config

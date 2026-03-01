@@ -1,0 +1,52 @@
+---
+# authentik-config/tasks/application.yml
+#
+# Creates the Authentik application and links it to the proxy provider.
+# Skips if an application with the same slug already exists.
+
+- name: "Check if application exists"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/applications/?search={{ authentik_application.slug | urlencode }}"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+  register: app_search
+  changed_when: false
+  check_mode: false
+
+- name: "Determine if application needs creation"
+  ansible.builtin.set_fact:
+    app_exists: "{{ app_search.json.results | selectattr('slug', 'equalto', authentik_application.slug) | list | length > 0 }}"
+
+- name: "Create application"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/applications/"
+    method: POST
+    headers: "{{ authentik_api_headers }}"
+    body_format: json
+    body:
+      name: "{{ authentik_application.name }}"
+      slug: "{{ authentik_application.slug }}"
+      provider: "{{ authentik_provider_pk }}"
+    status_code: [201]
+  when:
+    - not (app_exists | bool)
+    - authentik_provider_pk | default('') | length > 0
+    - not ansible_check_mode
+  register: app_create_result
+  changed_when: true
+
+- name: "Would create application (check mode)"
+  ansible.builtin.debug:
+    msg: >-
+      Would create application '{{ authentik_application.name }}'
+      (slug: {{ authentik_application.slug }},
+      provider: {{ authentik_provider_pk | default('unknown') }})
+  when:
+    - not (app_exists | bool)
+    - ansible_check_mode
+  changed_when: true
+
+- name: "Application already exists"
+  ansible.builtin.debug:
+    msg: "Application '{{ authentik_application.slug }}' already exists"
+  when: app_exists | bool

@@ -1,0 +1,65 @@
+---
+# authentik-config/tasks/groups.yml
+#
+# Creates application groups. Does NOT delete groups not in the list
+# (to preserve authentik's built-in groups like "authentik Admins").
+
+- name: "Fetch existing groups"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/groups/?page_size=100"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+  register: groups_response
+  changed_when: false
+  check_mode: false
+
+- name: "Determine which groups exist"
+  ansible.builtin.set_fact:
+    existing_group_names: "{{ groups_response.json.results | map(attribute='name') | list }}"
+
+- name: "Calculate groups to create"
+  ansible.builtin.set_fact:
+    groups_to_create: "{{ authentik_groups | rejectattr('name', 'in', existing_group_names) | list }}"
+
+- name: "Show planned group changes"
+  ansible.builtin.debug:
+    msg: >-
+      Groups: {{ authentik_groups | length }} desired,
+      {{ existing_group_names | length }} existing.
+      To create: {{ groups_to_create | length }}
+      ({{ groups_to_create | map(attribute='name') | join(', ') | default('none') }}).
+  when: groups_to_create | length > 0
+
+- name: "Create missing groups"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/groups/"
+    method: POST
+    headers: "{{ authentik_api_headers }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+    status_code: [201]
+  loop: "{{ groups_to_create }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - groups_to_create | length > 0
+    - not ansible_check_mode
+  register: group_create_results
+  changed_when: true
+
+- name: "Would create groups (check mode)"
+  ansible.builtin.debug:
+    msg: "Would create group: {{ item.name }}"
+  loop: "{{ groups_to_create }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - groups_to_create | length > 0
+    - ansible_check_mode
+  changed_when: true
+
+- name: "All groups present"
+  ansible.builtin.debug:
+    msg: "All {{ authentik_groups | length }} groups already exist"
+  when: groups_to_create | length == 0

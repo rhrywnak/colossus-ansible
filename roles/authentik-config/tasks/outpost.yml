@@ -1,0 +1,73 @@
+---
+# authentik-config/tasks/outpost.yml
+#
+# Ensures the Authentik application is bound to the embedded outpost.
+# The embedded outpost always exists — we just need to make sure our
+# application's provider is in its providers list.
+
+- name: "Fetch outposts"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/outposts/instances/?page_size=100"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+  register: outposts_response
+  changed_when: false
+  check_mode: false
+
+- name: "Find embedded outpost"
+  ansible.builtin.set_fact:
+    embedded_outpost: "{{ outposts_response.json.results | selectattr('managed', 'search', 'goauthentik.io/outposts/embedded') | first | default(None) }}"
+
+# Fallback: if managed filter doesn't match, use name-based search
+- name: "Find embedded outpost (fallback by name)"
+  ansible.builtin.set_fact:
+    embedded_outpost: "{{ outposts_response.json.results | selectattr('name', 'search', 'Embedded') | first | default(None) }}"
+  when: embedded_outpost is none or embedded_outpost == None
+
+- name: "Validate embedded outpost found"
+  ansible.builtin.assert:
+    that:
+      - embedded_outpost is not none
+      - embedded_outpost != None
+    fail_msg: >
+      Could not find the embedded outpost. This should exist by default
+      in any Authentik installation.
+    quiet: true
+
+- name: "Check if provider is already in outpost"
+  ansible.builtin.set_fact:
+    provider_in_outpost: "{{ authentik_provider_pk | string in (embedded_outpost.providers | map('string') | list) }}"
+  when: authentik_provider_pk is defined and authentik_provider_pk | length > 0
+
+- name: "Add provider to embedded outpost"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/outposts/instances/{{ embedded_outpost.pk }}/"
+    method: PATCH
+    headers: "{{ authentik_api_headers }}"
+    body_format: json
+    body:
+      providers: "{{ embedded_outpost.providers + [authentik_provider_pk | int] }}"
+    status_code: [200]
+  when:
+    - authentik_provider_pk is defined
+    - authentik_provider_pk | length > 0
+    - not (provider_in_outpost | default(false) | bool)
+    - not ansible_check_mode
+  register: outpost_update_result
+  changed_when: true
+
+- name: "Would add provider to outpost (check mode)"
+  ansible.builtin.debug:
+    msg: >-
+      Would add provider {{ authentik_provider_pk }} to embedded outpost
+      '{{ embedded_outpost.name }}' (current providers: {{ embedded_outpost.providers }})
+  when:
+    - authentik_provider_pk is defined
+    - not (provider_in_outpost | default(false) | bool)
+    - ansible_check_mode
+  changed_when: true
+
+- name: "Provider already in outpost"
+  ansible.builtin.debug:
+    msg: "Provider {{ authentik_provider_pk | default('unknown') }} already bound to embedded outpost"
+  when: provider_in_outpost | default(false) | bool

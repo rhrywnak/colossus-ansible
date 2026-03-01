@@ -1,0 +1,36 @@
+---
+# authentik-config role defaults
+# Override in inventory/host_vars/authentik.yml
+
+# ── API Connection ──────────────────────────────────────────
+authentik_api_base: "http://10.10.100.58:9000/api/v3"
+authentik_api_token: "{{ vault_authentik_api_token }}"
+
+# ── Common API headers (used by all tasks) ──────────────────
+authentik_api_headers:
+  Authorization: "Bearer {{ authentik_api_token }}"
+  Content-Type: "application/json"
+  Accept: "application/json"
+
+# ── Brand ───────────────────────────────────────────────────
+authentik_brand_domain: "auth.cogmai.com"
+
+# ── Provider ────────────────────────────────────────────────
+authentik_provider:
+  name: "colossus-forward-auth"
+  authorization_flow_slug: "default-provider-authorization-implicit-consent"
+  mode: "forward_domain"
+  external_host: "https://auth.cogmai.com"
+  cookie_domain: "cogmai.com"
+  access_token_validity: "hours=24"
+
+# ── Application ─────────────────────────────────────────────
+authentik_application:
+  name: "Colossus Services"
+  slug: "colossus-services"
+
+# ── Groups ──────────────────────────────────────────────────
+authentik_groups: []
+
+# ── Users ───────────────────────────────────────────────────
+authentik_users: []

@@ -1,0 +1,66 @@
+---
+# VM-316 Authentik — Provisioning Recipe
+#
+# Used with: ansible-playbook playbooks/create-vm.yml -e @vars/vm-316-authentik.yml
+#
+# This file documents every parameter needed to recreate VM-316 from scratch.
+# The VM runs on CoreOS with Podman Quadlet containers for Authentik 2025.12.
+#
+# Provisioning scripts: ~/Projects/colossus-homelab/authentik/
+# Butane config:        ~/Projects/colossus-homelab/authentik/authentik.bu
+#
+# After VM creation, complete the initial setup wizard at:
+#   http://10.10.100.58:9000/if/flow/initial-setup/
+# Then create an API token and store in Ansible Vault, then run:
+#   ansible-playbook playbooks/configure-authentik.yml
+
+# ── VM Identity ─────────────────────────────────────────────
+vm_id: 316
+vm_name: authentik
+vm_description: "Authentik identity provider (CoreOS + Podman Quadlet)"
+proxmox_node: pve-3
+
+# ── Hardware ────────────────────────────────────────────────
+vm_cores: 2
+vm_memory: 2048
+vm_disk_size: 20G
+vm_machine: q35
+vm_cpu_type: host
+
+# ── Network ─────────────────────────────────────────────────
+vm_ip: 10.10.100.58
+vm_cidr: 24
+vm_gateway: 10.10.100.1
+vm_bridge: vmbr0
+vm_nameserver: 10.10.100.53
+
+# ── Storage ─────────────────────────────────────────────────
+vm_boot_storage: pbs-zfs
+vm_ignition_storage: coreos-snippets
+vm_ignition_file: authentik.ign
+
+# ── ZFS Datasets ────────────────────────────────────────────
+# Created by colossus-homelab/authentik/01-create-zfs-datasets.sh
+zfs_datasets:
+  - path: pbs-zfs/services/authentik/postgres
+    recordsize: 8K
+    description: "PostgreSQL database files"
+  - path: pbs-zfs/services/authentik/data
+    recordsize: 128K
+    description: "Authentik media, templates, exports (/data mount)"
+
+# ── Proxmox Directory Mappings (virtiofs) ───────────────────
+directory_mappings:
+  - name: authentik-postgres
+    path: /pbs-zfs/services/authentik/postgres
+  - name: authentik-data
+    path: /pbs-zfs/services/authentik/data
+
+# ── Container Images ────────────────────────────────────────
+authentik_version: "2025.12"
+postgres_version: "16-alpine"
+
+# ── Service Ports ───────────────────────────────────────────
+authentik_http_port: 9000
+authentik_https_port: 9443
+postgres_port: 5432

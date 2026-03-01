@@ -1,0 +1,74 @@
+---
+# authentik-config/tasks/main.yml
+#
+# Configures Authentik via its REST API (/api/v3/).
+# Follows the pihole-dns pattern: API-based, declarative, idempotent.
+#
+# All API calls run from the control node (connection: local in playbook).
+#
+# Required variables:
+#   authentik_api_base:    API base URL (e.g., http://10.10.100.58:9000/api/v3)
+#   authentik_api_token:   Bearer token (from vault)
+#   authentik_brand_domain: Domain for the default brand
+#   authentik_provider:    Proxy provider configuration dict
+#   authentik_application: Application configuration dict
+#   authentik_groups:      List of groups to create
+#   authentik_users:       List of users to create
+
+- name: "Validate required variables"
+  ansible.builtin.assert:
+    that:
+      - authentik_api_base is defined
+      - authentik_api_token is defined
+      - authentik_api_token | length > 0
+      - authentik_brand_domain is defined
+      - authentik_provider is defined
+      - authentik_application is defined
+    fail_msg: >
+      Missing required variables. Ensure authentik_api_token is set
+      in vault and host_vars/authentik.yml is complete.
+    quiet: true
+
+# ── Verify API connectivity ──────────────────────────────────
+- name: "Verify Authentik API is reachable"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/root/config/"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+    status_code: [200]
+  register: authentik_api_check
+  changed_when: false
+  check_mode: false
+
+- name: "Show Authentik version"
+  ansible.builtin.debug:
+    msg: "Authentik API reachable ({{ authentik_api_check.json.capabilities | length }} capabilities)"
+
+# ── Configure resources in dependency order ──────────────────
+- name: "Configure brand"
+  ansible.builtin.include_tasks: brand.yml
+
+- name: "Configure groups"
+  ansible.builtin.include_tasks: groups.yml
+
+- name: "Configure proxy provider"
+  ansible.builtin.include_tasks: provider.yml
+
+- name: "Configure application"
+  ansible.builtin.include_tasks: application.yml
+
+- name: "Configure outpost"
+  ansible.builtin.include_tasks: outpost.yml
+
+- name: "Configure users"
+  ansible.builtin.include_tasks: users.yml
+
+- name: "Show summary"
+  ansible.builtin.debug:
+    msg: >-
+      Authentik configuration complete.
+      Brand: {{ authentik_brand_domain }},
+      Provider: {{ authentik_provider.name }},
+      Application: {{ authentik_application.slug }},
+      Groups: {{ authentik_groups | map(attribute='name') | join(', ') }},
+      Users: {{ authentik_users | map(attribute='username') | join(', ') }}.

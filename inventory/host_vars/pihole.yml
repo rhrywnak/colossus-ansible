@@ -20,6 +20,9 @@ pihole_dns_records:
   - "10.10.100.55 colossus-legal-api-dev.cogmai.com"
   - "10.10.100.55 traefik.cogmai.com"
 
+  # ── Authentication (via Traefik) ──────────────────────────
+  - "10.10.100.55 auth.cogmai.com"
+
   # ── Application routes (direct — DEV) ─────────────────────
   - "10.10.100.220 colossus-legal-dev.cogmai.com legal-dev"
 

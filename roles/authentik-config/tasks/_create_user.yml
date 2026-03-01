@@ -1,0 +1,81 @@
+---
+# authentik-config/tasks/_create_user.yml
+#
+# Creates a single user. Called from users.yml via include_tasks loop.
+# Variables available: user_def (the current user dict), group_uuid_map
+
+- name: "Check if user '{{ user_def.username }}' exists"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/users/?search={{ user_def.username | urlencode }}"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+  register: user_search
+  changed_when: false
+  check_mode: false
+
+- name: "Determine if user '{{ user_def.username }}' needs creation"
+  ansible.builtin.set_fact:
+    user_exists: "{{ user_search.json.results | selectattr('username', 'equalto', user_def.username) | list | length > 0 }}"
+    existing_user: "{{ user_search.json.results | selectattr('username', 'equalto', user_def.username) | first | default({}) }}"
+
+- name: "Resolve group UUIDs for '{{ user_def.username }}'"
+  ansible.builtin.set_fact:
+    user_group_uuids: >-
+      {{ user_def.groups | default([])
+         | map('extract', group_uuid_map)
+         | select('defined')
+         | list }}
+
+- name: "Create user '{{ user_def.username }}'"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/users/"
+    method: POST
+    headers: "{{ authentik_api_headers }}"
+    body_format: json
+    body:
+      username: "{{ user_def.username }}"
+      name: "{{ user_def.name }}"
+      email: "{{ user_def.email | default('') }}"
+      is_active: true
+      groups: "{{ user_group_uuids }}"
+    status_code: [201]
+  when:
+    - not (user_exists | bool)
+    - not ansible_check_mode
+  register: user_create_result
+  changed_when: true
+
+- name: "Set initial password for '{{ user_def.username }}'"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/users/{{ user_create_result.json.pk }}/set_password/"
+    method: POST
+    headers: "{{ authentik_api_headers }}"
+    body_format: json
+    body:
+      password: "{{ lookup('vars', user_def.password_var) }}"
+    status_code: [204]
+  when:
+    - not (user_exists | bool)
+    - not ansible_check_mode
+    - user_create_result is defined
+    - user_create_result.json is defined
+    - user_def.password_var is defined
+  changed_when: true
+  no_log: true
+
+- name: "Would create user (check mode)"
+  ansible.builtin.debug:
+    msg: >-
+      Would create user '{{ user_def.username }}'
+      (name: {{ user_def.name }},
+      email: {{ user_def.email | default('') }},
+      groups: {{ user_def.groups | default([]) | join(', ') }})
+  when:
+    - not (user_exists | bool)
+    - ansible_check_mode
+  changed_when: true
+
+- name: "User '{{ user_def.username }}' already exists"
+  ansible.builtin.debug:
+    msg: "User '{{ user_def.username }}' already exists (pk={{ existing_user.pk | default('?') }})"
+  when: user_exists | bool

@@ -17,6 +17,33 @@ traefik_domain: "{{ domain | default('cogmai.com') }}"
 #   backend_url: (optional) Backend service URL — creates loadBalancer
 #   service:     (optional) Built-in service override (e.g., api@internal)
 #   external:    (optional) If true, creates HTTP router for tunnel traffic
+#   protected:   (optional) If true, applies auth middleware (requires traefik_auth)
 #
 # Exactly one of backend_url or service must be specified.
 traefik_routes: []
+
+# ── Authentication middleware (optional) ─────────────────────
+# When defined and enabled, routes with protected: true will
+# require authentication via ForwardAuth before Traefik forwards
+# to the backend. Set traefik_auth.enabled: false to bypass
+# auth globally (emergency override).
+#
+# Example:
+#   traefik_auth:
+#     enabled: true
+#     name: "authentik"
+#     address: "http://10.10.100.58:9000/outpost.goauthentik.io/auth/traefik"
+#     response_headers:
+#       - "X-authentik-username"
+#       - "X-authentik-groups"
+traefik_auth: {}
+
+# ── Auth portal (optional) ──────────────────────────────────
+# When defined, creates routes for the authentication portal
+# and the outpost callback path (/outpost.goauthentik.io/).
+#
+# Example:
+#   traefik_auth_portal:
+#     host: "auth.cogmai.com"
+#     backend_url: "http://10.10.100.58:9000"
+traefik_auth_portal: {}

@@ -1,0 +1,50 @@
+---
+# authentik-config/tasks/brand.yml
+#
+# Configures the default brand domain so the embedded outpost
+# knows where to redirect users for authentication.
+
+- name: "Fetch current brands"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/brands/"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+  register: brands_response
+  changed_when: false
+  check_mode: false
+
+- name: "Find default brand"
+  ansible.builtin.set_fact:
+    default_brand: "{{ brands_response.json.results | selectattr('default', 'equalto', true) | first }}"
+
+- name: "Check if brand domain needs updating"
+  ansible.builtin.set_fact:
+    brand_needs_update: "{{ default_brand.domain != authentik_brand_domain }}"
+
+- name: "Update brand domain"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/brands/{{ default_brand.pk }}/"
+    method: PATCH
+    headers: "{{ authentik_api_headers }}"
+    body_format: json
+    body:
+      domain: "{{ authentik_brand_domain }}"
+    status_code: [200]
+  when:
+    - brand_needs_update | bool
+    - not ansible_check_mode
+  register: brand_update_result
+  changed_when: true
+
+- name: "Would update brand domain (check mode)"
+  ansible.builtin.debug:
+    msg: "Would update brand domain: '{{ default_brand.domain }}' → '{{ authentik_brand_domain }}'"
+  when:
+    - brand_needs_update | bool
+    - ansible_check_mode
+  changed_when: true
+
+- name: "Brand domain already correct"
+  ansible.builtin.debug:
+    msg: "Brand domain already set to '{{ authentik_brand_domain }}'"
+  when: not (brand_needs_update | bool)

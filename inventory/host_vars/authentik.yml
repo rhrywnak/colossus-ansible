@@ -1,0 +1,57 @@
+---
+# Authentik (VM-316) — Configuration via REST API
+#
+# The authentik-config role uses these variables to configure
+# Authentik via its /api/v3/ REST API. This is the single source
+# of truth for all Authentik configuration.
+#
+# API authentication uses a token created during initial setup.
+# The token is stored in Ansible Vault (vault_authentik_api_token).
+#
+# Usage:
+#   ansible-playbook playbooks/configure-authentik.yml --check   # dry-run
+#   ansible-playbook playbooks/configure-authentik.yml            # execute
+
+# ── API Connection ──────────────────────────────────────────
+authentik_api_base: "http://10.10.100.58:9000/api/v3"
+# authentik_api_token comes from vault via defaults/main.yml
+
+# ── Brand Configuration ─────────────────────────────────────
+authentik_brand_domain: "auth.cogmai.com"
+
+# ── Provider (Proxy — Forward Auth Domain Level) ────────────
+authentik_provider:
+  name: "colossus-forward-auth"
+  authorization_flow_slug: "default-provider-authorization-implicit-consent"
+  mode: "forward_domain"
+  external_host: "https://auth.cogmai.com"
+  cookie_domain: "cogmai.com"
+  access_token_validity: "hours=24"
+
+# ── Application ─────────────────────────────────────────────
+authentik_application:
+  name: "Colossus Services"
+  slug: "colossus-services"
+
+# ── Groups ──────────────────────────────────────────────────
+# Creates groups if they don't exist. Does NOT remove groups
+# not listed here (to preserve authentik's built-in groups).
+authentik_groups:
+  - name: "admin"
+  - name: "legal_editor"
+  - name: "legal_viewer"
+  - name: "ai_user"
+
+# ── Users ───────────────────────────────────────────────────
+# Creates users if they don't exist. Enforces group membership.
+# Passwords are in vault (vault_authentik_roman_password).
+# Users should change password on first login.
+authentik_users:
+  - username: "roman"
+    name: "Roman"
+    email: "roman@cogmai.com"
+    password_var: "vault_authentik_roman_password"
+    groups:
+      - "admin"
+      - "legal_editor"
+      - "ai_user"

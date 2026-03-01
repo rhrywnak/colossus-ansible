@@ -1,0 +1,83 @@
+---
+# authentik-config/tasks/provider.yml
+#
+# Creates the proxy provider for Traefik ForwardAuth (domain-level).
+# Skips if a provider with the same name already exists.
+
+- name: "Check if proxy provider exists"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/providers/proxy/?search={{ authentik_provider.name | urlencode }}"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+  register: provider_search
+  changed_when: false
+  check_mode: false
+
+- name: "Determine if provider needs creation"
+  ansible.builtin.set_fact:
+    provider_exists: "{{ provider_search.json.results | selectattr('name', 'equalto', authentik_provider.name) | list | length > 0 }}"
+    existing_provider: "{{ provider_search.json.results | selectattr('name', 'equalto', authentik_provider.name) | first | default({}) }}"
+
+# Look up the authorization flow UUID (needed for provider creation)
+- name: "Fetch authorization flow"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/flows/instances/?slug={{ authentik_provider.authorization_flow_slug }}"
+    method: GET
+    headers: "{{ authentik_api_headers }}"
+  register: flow_response
+  changed_when: false
+  check_mode: false
+  when: not (provider_exists | bool)
+
+- name: "Validate authorization flow found"
+  ansible.builtin.assert:
+    that:
+      - flow_response.json.results | length > 0
+    fail_msg: >
+      Authorization flow '{{ authentik_provider.authorization_flow_slug }}' not found.
+      Check that the flow exists in Authentik.
+    quiet: true
+  when: not (provider_exists | bool)
+
+- name: "Create proxy provider"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/providers/proxy/"
+    method: POST
+    headers: "{{ authentik_api_headers }}"
+    body_format: json
+    body:
+      name: "{{ authentik_provider.name }}"
+      authorization_flow: "{{ flow_response.json.results[0].pk }}"
+      mode: "{{ authentik_provider.mode }}"
+      external_host: "{{ authentik_provider.external_host }}"
+      cookie_domain: "{{ authentik_provider.cookie_domain }}"
+      access_token_validity: "{{ authentik_provider.access_token_validity }}"
+    status_code: [201]
+  when:
+    - not (provider_exists | bool)
+    - not ansible_check_mode
+  register: provider_create_result
+  changed_when: true
+
+- name: "Would create proxy provider (check mode)"
+  ansible.builtin.debug:
+    msg: >-
+      Would create proxy provider '{{ authentik_provider.name }}'
+      (mode: {{ authentik_provider.mode }},
+      external_host: {{ authentik_provider.external_host }},
+      cookie_domain: {{ authentik_provider.cookie_domain }})
+  when:
+    - not (provider_exists | bool)
+    - ansible_check_mode
+  changed_when: true
+
+- name: "Provider already exists"
+  ansible.builtin.debug:
+    msg: "Proxy provider '{{ authentik_provider.name }}' already exists (pk={{ existing_provider.pk | default('?') }})"
+  when: provider_exists | bool
+
+# Store provider PK for use in application.yml
+- name: "Store provider PK"
+  ansible.builtin.set_fact:
+    authentik_provider_pk: >-
+      {{ existing_provider.pk | default(provider_create_result.json.pk | default('')) }}
