@@ -1,6 +1,6 @@
 # {{ ansible_managed }}
 # =============================================================================
-# Traefik Dynamic Configuration — Routers & Services
+# Traefik Dynamic Configuration — Routers, Services & Middlewares
 # =============================================================================
 # This file is managed by Ansible (role: traefik-route).
 # Manual edits will be overwritten on the next playbook run.
@@ -17,11 +17,9 @@ http:
       redirectScheme:
         scheme: https
         permanent: true
-{% if traefik_auth is defined and traefik_auth.enabled | default(false) %}
 
-    # ForwardAuth middleware — Authentik
-    # Protected routes require authentication before Traefik forwards to backend.
-    # Set traefik_auth.enabled: false to bypass auth globally (emergency override).
+{% if traefik_auth is defined and traefik_auth.enabled | default(false) %}
+    # Authentik ForwardAuth — verifies session cookie, injects identity headers
     {{ traefik_auth.name }}:
       forwardAuth:
         address: "{{ traefik_auth.address }}"
@@ -36,51 +34,6 @@ http:
   # ROUTERS
   # ==========================================================================
   routers:
-{% if traefik_auth_portal is defined and traefik_auth_portal.host is defined %}
-
-    # --- Authentik outpost callback (priority 15) ---
-    # Catches /outpost.goauthentik.io/ on ALL hosts for auth flow callbacks.
-    # Must be higher priority than application routers.
-    authentik-outpost:
-      rule: "PathPrefix(`/outpost.goauthentik.io/`)"
-      entryPoints:
-        - https
-      service: authentik-portal
-      priority: 15
-      tls:
-        certResolver: {{ traefik_cert_resolver }}
-        domains:
-          - main: "*.{{ traefik_domain }}"
-            sans:
-              - "{{ traefik_domain }}"
-
-    authentik-outpost-http:
-      rule: "PathPrefix(`/outpost.goauthentik.io/`)"
-      entryPoints:
-        - http
-      service: authentik-portal
-      priority: 15
-
-    # --- Authentik portal (auth.cogmai.com) ---
-    authentik-portal:
-      rule: "Host(`{{ traefik_auth_portal.host }}`)"
-      entryPoints:
-        - https
-      service: authentik-portal
-      tls:
-        certResolver: {{ traefik_cert_resolver }}
-        domains:
-          - main: "*.{{ traefik_domain }}"
-            sans:
-              - "{{ traefik_domain }}"
-
-    authentik-portal-http:
-      rule: "Host(`{{ traefik_auth_portal.host }}`)"
-      entryPoints:
-        - http
-      service: authentik-portal
-      priority: 10
-{% endif %}
 
     # --- HTTP routers for Cloudflare Tunnel traffic (no redirect) ---
 {% for route in traefik_routes if route.external | default(false) %}
@@ -90,11 +43,18 @@ http:
         - http
       service: {{ route.service | default(route.name) }}
       priority: 10
-{% if not loop.last %}
+
+{% endfor %}
+{% if traefik_auth_portal is defined %}
+    # --- Authentik portal HTTP (for Cloudflare Tunnel) ---
+    authentik-portal-http:
+      rule: "Host(`{{ traefik_auth_portal.host }}`)"
+      entryPoints:
+        - http
+      service: authentik-server
+      priority: 10
 
 {% endif %}
-{% endfor %}
-
     # --- HTTP catch-all: redirect LAN browsers to HTTPS ---
     # Priority 1 (lowest) — named routers on specific hosts take precedence
     http-catchall:
@@ -106,34 +66,67 @@ http:
       service: noop@internal
       priority: 1
 
-    # --- HTTPS routers ---
-{% for route in traefik_routes %}
-    {{ route.name }}:
-      rule: "Host(`{{ route.host }}`)"
+{% if traefik_auth_portal is defined %}
+    # --- Authentik portal (auth.cogmai.com) ---
+    authentik-portal:
+      rule: "Host(`{{ traefik_auth_portal.host }}`)"
       entryPoints:
         - https
-{% if route.protected | default(false) and traefik_auth is defined and traefik_auth.enabled | default(false) %}
-      middlewares:
-        - {{ traefik_auth.name }}
-{% endif %}
-      service: {{ route.service | default(route.name) }}
+      service: authentik-server
       tls:
         certResolver: {{ traefik_cert_resolver }}
         domains:
           - main: "*.{{ traefik_domain }}"
             sans:
               - "{{ traefik_domain }}"
-{% if not loop.last %}
 
 {% endif %}
-{% endfor %}
+{% if traefik_auth is defined and traefik_auth.enabled | default(false) %}
+    # --- Authentik outpost path router (all protected hosts) ---
+    # Catches /outpost.goauthentik.io/* on any host — handles login callbacks,
+    # sign_out, and session management. Priority 200 ensures this always
+    # wins over per-app routers (which auto-calculate ~40-50 from rule length).
+    authentik-outpost:
+      rule: "PathPrefix(`/outpost.goauthentik.io/`)"
+      entryPoints:
+        - https
+      service: authentik-server
+      priority: 200
+      tls:
+        certResolver: {{ traefik_cert_resolver }}
+        domains:
+          - main: "*.{{ traefik_domain }}"
+            sans:
+              - "{{ traefik_domain }}"
 
+{% endif %}
+    # --- HTTPS routers ---
+{% for route in traefik_routes %}
+    {{ route.name }}:
+      rule: "Host(`{{ route.host }}`)"
+      entryPoints:
+        - https
+      service: {{ route.service | default(route.name) }}
+      priority: 10
+{% if traefik_auth is defined and traefik_auth.enabled | default(false) and route.protected | default(false) %}
+      middlewares:
+        - {{ traefik_auth.name }}
+{% endif %}
+      tls:
+        certResolver: {{ traefik_cert_resolver }}
+        domains:
+          - main: "*.{{ traefik_domain }}"
+            sans:
+              - "{{ traefik_domain }}"
+
+{% endfor %}
   # ==========================================================================
   # SERVICES (backend targets)
   # ==========================================================================
   services:
-{% if traefik_auth_portal is defined and traefik_auth_portal.backend_url is defined %}
-    authentik-portal:
+{% if traefik_auth_portal is defined %}
+    # Authentik server — portal + outpost
+    authentik-server:
       loadBalancer:
         servers:
           - url: "{{ traefik_auth_portal.backend_url }}"
@@ -144,7 +137,5 @@ http:
       loadBalancer:
         servers:
           - url: "{{ route.backend_url }}"
-{% if not loop.last %}
 
-{% endif %}
 {% endfor %}
