@@ -87,7 +87,7 @@ http:
     # sign_out, and session management. Priority 200 ensures this always
     # wins over per-app routers (which auto-calculate ~40-50 from rule length).
     authentik-outpost:
-      rule: "PathPrefix(`/outpost.goauthentik.io/`)"
+      rule: "HostRegexp(`.+\\.{{ traefik_domain | regex_escape }}`) && PathPrefix(`/outpost.goauthentik.io/`)"
       entryPoints:
         - https
       service: authentik-server
