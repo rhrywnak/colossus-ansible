@@ -81,25 +81,6 @@ http:
               - "{{ traefik_domain }}"
 
 {% endif %}
-{% if traefik_auth is defined and traefik_auth.enabled | default(false) %}
-    # --- Authentik outpost path router (all protected hosts) ---
-    # Catches /outpost.goauthentik.io/* on any host — handles login callbacks,
-    # sign_out, and session management. Priority 200 ensures this always
-    # wins over per-app routers (which auto-calculate ~40-50 from rule length).
-    authentik-outpost:
-      rule: "HostRegexp(`.+\\.{{ traefik_domain | regex_escape }}`) && PathPrefix(`/outpost.goauthentik.io/`)"
-      entryPoints:
-        - https
-      service: authentik-server
-      priority: 200
-      tls:
-        certResolver: {{ traefik_cert_resolver }}
-        domains:
-          - main: "*.{{ traefik_domain }}"
-            sans:
-              - "{{ traefik_domain }}"
-
-{% endif %}
     # --- HTTPS routers ---
 {% for route in traefik_routes %}
     {{ route.name }}:
@@ -119,6 +100,24 @@ http:
             sans:
               - "{{ traefik_domain }}"
 
+{% if traefik_auth is defined and traefik_auth.enabled | default(false) and route.protected | default(false) %}
+    # Authentik outpost path router for {{ route.name }}
+    # Handles /outpost.goauthentik.io/* (login callbacks, sign_out, session mgmt)
+    # Priority 15 beats the app router at 10 for the same Host
+    {{ route.name }}-auth:
+      rule: "Host(`{{ route.host }}`) && PathPrefix(`/outpost.goauthentik.io/`)"
+      entryPoints:
+        - https
+      service: authentik-server
+      priority: 15
+      tls:
+        certResolver: {{ traefik_cert_resolver }}
+        domains:
+          - main: "*.{{ traefik_domain }}"
+            sans:
+              - "{{ traefik_domain }}"
+
+{% endif %}
 {% endfor %}
   # ==========================================================================
   # SERVICES (backend targets)
