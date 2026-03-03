@@ -8,5 +8,6 @@
 window.__COLOSSUS_CONFIG__ = {
   apiUrl: "{{ colossus_legal_api_url }}",
   environment: "{{ group_names | intersect(['dev', 'prod']) | first | default('unknown') }}",
-  version: "{{ deploy_version }}"
+  version: "{{ deploy_version }}",
+  authLogoutUrl: "{{ colossus_legal_auth_logout_url }}"
 };
