@@ -47,6 +47,12 @@ authentik_groups:
 # Passwords are in vault (vault_authentik_roman_password).
 # Users should change password on first login.
 authentik_users:
+  - username: "akadmin"
+    name: "Colossus Admin"
+    email: "admin@cogmai.com"
+    password_var: "vault_authentik_roman_password"
+    groups:
+      - "admin"
   - username: "roman"
     name: "Roman"
     email: "roman@cogmai.com"

@@ -1,5 +1,5 @@
 ---
-# Traefik (CT-313) -- route definitions
+# Traefik (CT-313) — route definitions
 #
 # This is the single source of truth for all Traefik routes.
 # The traefik-route role templates /etc/traefik/dynamic/services.yml
@@ -15,7 +15,7 @@
 #
 #   * Exactly one of backend_url or service must be specified.
 
-# -- Authentication Middleware ------------------------------------------------
+# ── Authentication Middleware ────────────────────────────────
 # ForwardAuth middleware for Authentik. When enabled, routes with
 # protected: true require authentication before Traefik forwards
 # to the backend service.
@@ -40,16 +40,16 @@ traefik_auth:
     - "X-authentik-meta-app"
     - "X-authentik-meta-version"
 
-# -- Authentik Portal Route ---------------------------------------------------
+# ── Authentik Portal Route ──────────────────────────────────
 # The auth portal itself and the outpost callback path.
 # These are special routes rendered by the template separately.
 traefik_auth_portal:
   host: "auth.{{ domain }}"
   backend_url: "http://10.10.100.58:9000"
 
-# -- Application Routes -------------------------------------------------------
+# ── Application Routes ──────────────────────────────────────
 traefik_routes:
-  # -- Colossus-Legal PROD --
+  # ── Colossus-Legal PROD ──────────────────────────────────
   - name: colossus-legal-frontend
     host: "colossus-legal.{{ domain }}"
     backend_url: "http://10.10.100.120:5473"
@@ -60,9 +60,9 @@ traefik_routes:
     host: "colossus-legal-api.{{ domain }}"
     backend_url: "http://10.10.100.120:3403"
     external: true
-    protected: true
+    protected: false           # API uses its own auth (JWT/headers)
 
-  # -- Colossus-Legal DEV --
+  # ── Colossus-Legal DEV ───────────────────────────────────
   - name: colossus-legal-dev
     host: "colossus-legal-dev.{{ domain }}"
     backend_url: "http://10.10.100.220:5473"
@@ -75,7 +75,7 @@ traefik_routes:
     external: false
     protected: true
 
-  # -- Infrastructure --
+  # ── Infrastructure ───────────────────────────────────────
   - name: traefik-dashboard
     host: "traefik.{{ domain }}"
     service: "api@internal"
@@ -88,7 +88,7 @@ traefik_routes:
     external: false
     protected: true
 
-  # -- Monitoring --
+  # ── Monitoring ───────────────────────────────────────────
   - name: grafana
     host: "grafana.{{ domain }}"
     backend_url: "http://10.10.100.56:3000"

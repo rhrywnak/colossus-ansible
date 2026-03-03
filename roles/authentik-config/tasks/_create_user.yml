@@ -79,3 +79,22 @@
   ansible.builtin.debug:
     msg: "User '{{ user_def.username }}' already exists (pk={{ existing_user.pk | default('?') }})"
   when: user_exists | bool
+
+- name: "Update user '{{ user_def.username }}' if it exists"
+  ansible.builtin.uri:
+    url: "{{ authentik_api_base }}/core/users/{{ existing_user.pk }}/"
+    method: PATCH
+    headers: "{{ authentik_api_headers }}"
+    body_format: json
+    body:
+      name: "{{ user_def.name }}"
+      email: "{{ user_def.email | default('') }}"
+      groups: "{{ user_group_uuids }}"
+    status_code: [200]
+  when:
+    - user_exists | bool
+    - not ansible_check_mode
+    - (existing_user.name != user_def.name) or 
+      (existing_user.email != (user_def.email | default(''))) or
+      (existing_user.groups | sort != user_group_uuids | sort)
+  changed_when: true

@@ -1,0 +1,22 @@
+---
+# traefik-route role defaults
+# Override in inventory/host_vars/traefik.yml
+
+# ── Traefik paths ────────────────────────────────────────────
+traefik_config_dir: /etc/traefik/dynamic
+traefik_services_file: "{{ traefik_config_dir }}/services.yml"
+
+# ── TLS configuration ───────────────────────────────────────
+traefik_cert_resolver: letsencrypt
+traefik_domain: "{{ domain | default('cogmai.com') }}"
+
+# ── Route definitions ────────────────────────────────────────
+# Each route is a dict:
+#   name:        (required) Unique router/service identifier
+#   host:        (required) FQDN for Host() match rule
+#   backend_url: (optional) Backend service URL — creates loadBalancer
+#   service:     (optional) Built-in service override (e.g., api@internal)
+#   external:    (optional) If true, creates HTTP router for tunnel traffic
+#
+# Exactly one of backend_url or service must be specified.
+traefik_routes: []
