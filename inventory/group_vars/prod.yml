@@ -16,4 +16,4 @@ colossus_legal_document_path: "/data/documents"
 # ── Colossus-Legal: Frontend ─────────────────────────────────
 colossus_legal_api_url: "https://colossus-legal-api.cogmai.com"
 colossus_legal_cors_origins: "https://colossus-legal.cogmai.com,http://localhost:5473"
-colossus_legal_auth_logout_url: "https://colossus-legal.cogmai.com/outpost.goauthentik.io/sign_out"
+colossus_legal_auth_logout_url: "https://auth.cogmai.com/flows/-/default/invalidation/"

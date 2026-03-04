@@ -17,4 +17,4 @@ colossus_legal_document_path: "/data/documents"
 # This is the runtime-injected API URL (not baked into the image)
 colossus_legal_api_url: "https://colossus-legal-api-dev.cogmai.com"
 colossus_legal_cors_origins: "https://colossus-legal-dev.cogmai.com,http://localhost:5473"
-colossus_legal_auth_logout_url: "https://colossus-legal-dev.cogmai.com/outpost.goauthentik.io/sign_out"
+colossus_legal_auth_logout_url: "https://auth.cogmai.com/flows/-/default/invalidation/"
