@@ -117,6 +117,21 @@ http:
             sans:
               - "{{ traefik_domain }}"
 
+    # Logout bypass for {{ route.name }}
+    # Allows /api/logout to clear cookies without ForwardAuth intercepting
+    {{ route.name }}-logout:
+      rule: "Host(`{{ route.host }}`) && Path(`/api/logout`)"
+      entryPoints:
+        - https
+      service: {{ route.service | default(route.name) }}
+      priority: 20
+      tls:
+        certResolver: {{ traefik_cert_resolver }}
+        domains:
+          - main: "*.{{ traefik_domain }}"
+            sans:
+              - "{{ traefik_domain }}"
+
 {% endif %}
 {% endfor %}
   # ==========================================================================
