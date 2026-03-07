@@ -16,6 +16,12 @@
          else vault_colossus_legal_neo4j_password_dev }}
   no_log: true
 
+# ── Set Anthropic API key ────────────────────────────────────
+- name: "Set Anthropic API key"
+  ansible.builtin.set_fact:
+    _anthropic_api_key: "{{ vault_colossus_legal_anthropic_api_key }}"
+  no_log: true
+
 # ── Ensure document storage directory exists ─────────────────
 - name: "Create document storage directory"
   ansible.builtin.file:
