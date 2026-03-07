@@ -132,6 +132,21 @@ http:
             sans:
               - "{{ traefik_domain }}"
 
+    # CORS preflight bypass for {{ route.name }}
+    # OPTIONS requests carry no cookies — let the backend handle CORS directly
+    {{ route.name }}-cors-preflight:
+      rule: "Host(`{{ route.host }}`) && Method(`OPTIONS`)"
+      entryPoints:
+        - https
+      service: {{ route.service | default(route.name) }}
+      priority: 20
+      tls:
+        certResolver: {{ traefik_cert_resolver }}
+        domains:
+          - main: "*.{{ traefik_domain }}"
+            sans:
+              - "{{ traefik_domain }}"
+
 {% endif %}
 {% endfor %}
   # ==========================================================================

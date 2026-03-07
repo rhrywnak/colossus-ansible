@@ -12,6 +12,7 @@ colossus_legal_neo4j_user: "neo4j"
 colossus_legal_qdrant_url: "http://{{ dev_db_host }}:6333"
 colossus_legal_rust_log: "debug"
 colossus_legal_document_path: "/data/documents"
+colossus_legal_anthropic_model: "claude-sonnet-4-6"
 
 # ── Colossus-Legal: Frontend ─────────────────────────────────
 # This is the runtime-injected API URL (not baked into the image)
