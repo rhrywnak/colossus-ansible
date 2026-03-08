@@ -22,6 +22,12 @@
     _anthropic_api_key: "{{ vault_colossus_legal_anthropic_api_key }}"
   no_log: true
 
+# ── Set PostgreSQL URL ─────────────────────────────────────
+- name: "Set PostgreSQL URL"
+  ansible.builtin.set_fact:
+    _pg_url: "{{ colossus_legal_pg_url }}"
+  no_log: true
+
 # ── Ensure document storage directory exists ─────────────────
 - name: "Create document storage directory"
   ansible.builtin.file:
