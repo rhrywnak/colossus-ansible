@@ -12,9 +12,10 @@ colossus_legal_neo4j_user: "neo4j"
 colossus_legal_qdrant_url: "http://{{ prod_db_host }}:6333"
 colossus_legal_rust_log: "warn"
 colossus_legal_document_path: "/data/documents"
+colossus_legal_fastembed_cache_path: "/data/models"
 colossus_legal_anthropic_model: "claude-sonnet-4-6"
 colossus_legal_pg_url: "postgres://postgres:{{ vault_colossus_legal_pg_password_prod }}@10.10.100.110:5432/colossus_legal"
-  
+
 # ── Colossus-Legal: Frontend ─────────────────────────────────
 colossus_legal_api_url: "https://colossus-legal-api.cogmai.com"
 colossus_legal_cors_origins: "https://colossus-legal.cogmai.com,http://localhost:5473"

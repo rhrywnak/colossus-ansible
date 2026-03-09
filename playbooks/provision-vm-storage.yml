@@ -1,0 +1,182 @@
+---
+# provision-vm-storage.yml
+#
+# Provisions a new virtiofs storage mount on a running CoreOS app VM.
+# No VM destruction required. Fully idempotent — safe to run multiple times.
+#
+# What this playbook does:
+#   Play 1 — On the Proxmox host:
+#     1. Creates ZFS dataset
+#     2. Sets permissions on ZFS mountpoint
+#     3. Creates Proxmox cluster directory mapping
+#     4. Attaches virtiofs device to VM
+#
+#   Play 2 — On the CoreOS VM:
+#     1. Creates mount point directory
+#     2. Deploys systemd mount unit
+#     3. Enables and starts the mount unit
+#     4. Verifies mount is active with correct SELinux context
+#
+# Usage:
+#   DEV:
+#     ansible-playbook playbooks/provision-vm-storage.yml \
+#       -e target_host=colossus-dev-app1 \
+#       -e proxmox_node=pve-2 \
+#       -e zfs_pool=dev-zfs \
+#       -e dataset_name=models \
+#       -e mapping_id=dev-models \
+#       -e virtiofs_slot=1 \
+#       -e mount_path=/var/mnt/data/models
+#
+#   PROD:
+#     ansible-playbook playbooks/provision-vm-storage.yml \
+#       -e target_host=colossus-prod-app1 \
+#       -e proxmox_node=pve-1 \
+#       -e zfs_pool=prod-zfs \
+#       -e dataset_name=models \
+#       -e mapping_id=prod-models \
+#       -e virtiofs_slot=1 \
+#       -e mount_path=/var/mnt/data/models
+#
+# Required parameters:
+#   target_host   — inventory hostname of the CoreOS VM (e.g. colossus-dev-app1)
+#   proxmox_node  — inventory hostname of the Proxmox host (e.g. pve-2)
+#   zfs_pool      — ZFS pool name on the Proxmox host (e.g. dev-zfs)
+#   dataset_name  — name of the new dataset (e.g. models)
+#   mapping_id    — Proxmox directory mapping ID (e.g. dev-models)
+#   virtiofs_slot — virtiofs device slot number (0-based, integer)
+#   mount_path    — canonical mount path inside the VM (e.g. /var/mnt/data/models)
+#                   Must use /var/mnt/data/ prefix — NOT /mnt/data/ (CoreOS symlink)
+
+# ==============================================================================
+# PLAY 1 — Proxmox host: ZFS + directory mapping + virtiofs attachment
+# ==============================================================================
+- name: "Provision storage on Proxmox host"
+  hosts: "{{ proxmox_node }}"
+  gather_facts: false
+
+  vars:
+    _vmid: "{{ hostvars[target_host]['vmid'] }}"
+    _zfs_mountpoint: "/{{ zfs_pool }}/{{ dataset_name }}"
+
+  tasks:
+
+    - name: "Verify ZFS pool exists"
+      ansible.builtin.command:
+        cmd: "zpool status {{ zfs_pool }}"
+      register: zpool_status
+      changed_when: false
+      failed_when: zpool_status.rc != 0
+
+    - name: "Create ZFS dataset {{ zfs_pool }}/{{ dataset_name }}"
+      ansible.builtin.command:
+        cmd: "zfs create {{ zfs_pool }}/{{ dataset_name }}"
+      register: zfs_create
+      changed_when: zfs_create.rc == 0
+      failed_when:
+        - zfs_create.rc != 0
+        - "'dataset already exists' not in zfs_create.stderr"
+
+    - name: "Set permissions 755 on ZFS mountpoint {{ _zfs_mountpoint }}"
+      ansible.builtin.file:
+        path: "{{ _zfs_mountpoint }}"
+        mode: "0755"
+        state: directory
+
+    - name: "Check if directory mapping '{{ mapping_id }}' already exists"
+      ansible.builtin.command:
+        cmd: "pvesh get /cluster/mapping/dir/{{ mapping_id }}"
+      register: mapping_check
+      changed_when: false
+      failed_when: false
+
+    - name: "Create Proxmox directory mapping '{{ mapping_id }}'"
+      ansible.builtin.command:
+        cmd: >
+          pvesh create /cluster/mapping/dir
+          --id {{ mapping_id }}
+          --map "node={{ proxmox_node }},path={{ _zfs_mountpoint }}"
+      when: mapping_check.rc != 0
+
+    - name: "Check if virtiofs{{ virtiofs_slot }} is already attached to VM {{ _vmid }}"
+      ansible.builtin.shell:
+        cmd: "qm config {{ _vmid }} | grep '^virtiofs{{ virtiofs_slot }}:'"
+      register: virtiofs_check
+      changed_when: false
+      failed_when: false
+
+    - name: "Attach virtiofs{{ virtiofs_slot }} (dirid={{ mapping_id }}) to VM {{ _vmid }}"
+      ansible.builtin.command:
+        cmd: "qm set {{ _vmid }} --virtiofs{{ virtiofs_slot }} dirid={{ mapping_id }}"
+      when: virtiofs_check.rc != 0
+
+    - name: "Verify virtiofs attachment"
+      ansible.builtin.command:
+        cmd: "qm config {{ _vmid }} | grep '^virtiofs{{ virtiofs_slot }}:'"
+      register: virtiofs_verify
+      changed_when: false
+      failed_when: virtiofs_verify.rc != 0
+
+    - name: "Show virtiofs config"
+      ansible.builtin.debug:
+        msg: "{{ virtiofs_verify.stdout }}"
+
+# ==============================================================================
+# PLAY 2 — CoreOS VM: mount point + systemd unit + verification
+# ==============================================================================
+- name: "Deploy mount unit on CoreOS VM"
+  hosts: "{{ target_host }}"
+  gather_facts: false
+  become: true
+
+  tasks:
+
+    - name: "Create mount point directory {{ mount_path }}"
+      ansible.builtin.file:
+        path: "{{ mount_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: "Get systemd-escaped mount unit name for {{ mount_path }}"
+      ansible.builtin.command:
+        cmd: "systemd-escape -p --suffix=mount {{ mount_path }}"
+      register: mount_unit_name
+      changed_when: false
+
+    - name: "Deploy systemd mount unit /etc/systemd/system/{{ mount_unit_name.stdout }}"
+      ansible.builtin.template:
+        src: virtiofs-mount.unit.j2
+        dest: "/etc/systemd/system/{{ mount_unit_name.stdout }}"
+        mode: "0644"
+      register: mount_unit_deployed
+
+    - name: "Reload systemd daemon"
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: mount_unit_deployed.changed
+
+    - name: "Enable and start {{ mount_unit_name.stdout }}"
+      ansible.builtin.systemd:
+        name: "{{ mount_unit_name.stdout }}"
+        enabled: true
+        state: started
+
+    - name: "Verify mount is active at {{ mount_path }}"
+      ansible.builtin.command:
+        cmd: "mount | grep {{ mount_path }}"
+      register: mount_verify
+      changed_when: false
+      failed_when: mount_verify.rc != 0
+
+    - name: "Verify SELinux context is container_file_t"
+      ansible.builtin.command:
+        cmd: "ls -Zd {{ mount_path }}"
+      register: selinux_verify
+      changed_when: false
+      failed_when: "'container_file_t' not in selinux_verify.stdout"
+
+    - name: "Storage provisioning complete"
+      ansible.builtin.debug:
+        msg:
+          - "Mount:   {{ mount_verify.stdout }}"
+          - "SELinux: {{ selinux_verify.stdout }}"

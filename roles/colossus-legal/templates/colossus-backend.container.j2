@@ -3,9 +3,9 @@
 
 [Unit]
 Description=Colossus Legal Backend ({{ deploy_version }})
-After=network-online.target var-mnt-data-legal\x2ddocs.mount
+After=network-online.target var-mnt-data-legal\x2ddocs.mount var-mnt-data-models.mount
 Wants=network-online.target
-Requires=var-mnt-data-legal\x2ddocs.mount
+Requires=var-mnt-data-legal\x2ddocs.mount var-mnt-data-models.mount
 
 [Container]
 Image={{ container_registry }}/colossus-backend:{{ deploy_version }}
@@ -13,6 +13,7 @@ ContainerName=colossus-backend
 PublishPort={{ colossus_legal_backend_port }}:3403
 EnvironmentFile={{ app_env_dir }}/colossus-legal-backend.env
 Volume={{ colossus_legal_documents_host_path }}:{{ colossus_legal_documents_container_path }}:rw
+Volume={{ colossus_legal_models_host_path }}:{{ colossus_legal_models_container_path }}:rw
 
 [Service]
 Restart=always

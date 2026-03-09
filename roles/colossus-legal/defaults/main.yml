@@ -5,6 +5,11 @@
 colossus_legal_backend_port: 3403
 colossus_legal_frontend_port: 5473
 
-# Document storage — mounted read-only into the backend container
+# Document storage — virtiofs mount, legal PDF files
 colossus_legal_documents_host_path: "/mnt/data/legal-docs"
 colossus_legal_documents_container_path: "/data/documents"
+
+# Model storage — virtiofs mount, fastembed ONNX model cache
+# Models auto-download on first use (~270MB). Must be rw.
+colossus_legal_models_host_path: "/mnt/data/models"
+colossus_legal_models_container_path: "/data/models"

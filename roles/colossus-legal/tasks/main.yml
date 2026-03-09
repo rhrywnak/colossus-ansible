@@ -28,10 +28,16 @@
     _pg_url: "{{ colossus_legal_pg_url }}"
   no_log: true
 
-# ── Ensure document storage directory exists ─────────────────
+# ── Ensure storage directories exist ─────────────────────────
 - name: "Create document storage directory"
   ansible.builtin.file:
     path: "{{ colossus_legal_documents_host_path }}"
+    state: directory
+    mode: "0755"
+
+- name: "Create models storage directory"
+  ansible.builtin.file:
+    path: "{{ colossus_legal_models_host_path }}"
     state: directory
     mode: "0755"
 
