@@ -1,0 +1,18 @@
+# Managed by Ansible — do not edit manually
+# Dataset:  {{ zfs_pool }}/{{ dataset_name }}
+# Mapping:  {{ mapping_id }}
+# Mount:    {{ mount_path }}
+
+[Unit]
+Description=Mount {{ dataset_name }} virtiofs share
+After=systemd-modules-load.service
+Before=multi-user.target
+
+[Mount]
+What={{ mapping_id }}
+Where={{ mount_path }}
+Type=virtiofs
+Options=context="system_u:object_r:container_file_t:s0"
+
+[Install]
+WantedBy=multi-user.target
