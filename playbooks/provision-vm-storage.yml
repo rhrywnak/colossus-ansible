@@ -13,7 +13,9 @@
 #       -e dataset_name=models \
 #       -e mapping_id=dev-models \
 #       -e virtiofs_slot=1 \
-#       -e mount_path=/var/mnt/data/models
+#       -e mount_path=/var/mnt/data/models \
+#       -e dataset_uid=1001 \
+#       -e dataset_gid=1001
 #
 #   PROD:
 #     ansible-playbook playbooks/provision-vm-storage.yml \
@@ -23,7 +25,14 @@
 #       -e dataset_name=models \
 #       -e mapping_id=prod-models \
 #       -e virtiofs_slot=1 \
-#       -e mount_path=/var/mnt/data/models
+#       -e mount_path=/var/mnt/data/models \
+#       -e dataset_uid=1001 \
+#       -e dataset_gid=1001
+#
+# dataset_uid / dataset_gid:
+#   Omit for read-only datasets (defaults to root — correct for :ro mounts)
+#   Always pass 1001:1001 for writable datasets (:rw mounts)
+#   appuser inside the container runs as UID 1001
 
 # ==============================================================================
 # PLAY 1 — Proxmox host: ZFS + directory mapping + virtiofs attachment
@@ -54,10 +63,12 @@
         - zfs_create.rc != 0
         - "'dataset already exists' not in zfs_create.stderr"
 
-    - name: "Set permissions 755 on ZFS mountpoint {{ _zfs_mountpoint }}"
+    - name: "Set permissions and ownership on ZFS mountpoint {{ _zfs_mountpoint }}"
       ansible.builtin.file:
         path: "{{ _zfs_mountpoint }}"
         mode: "0755"
+        owner: "{{ dataset_uid | default('root') }}"
+        group: "{{ dataset_gid | default('root') }}"
         state: directory
 
     - name: "Check if directory mapping '{{ mapping_id }}' already exists"
