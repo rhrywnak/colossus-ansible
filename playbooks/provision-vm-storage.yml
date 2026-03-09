@@ -139,7 +139,7 @@
         state: started
 
     - name: "Verify mount is active at {{ mount_path }}"
-      ansible.builtin.command:
+      ansible.builtin.shell:
         cmd: "mount | grep {{ mount_path }}"
       register: mount_verify
       changed_when: false
