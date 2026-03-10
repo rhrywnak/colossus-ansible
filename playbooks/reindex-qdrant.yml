@@ -1,0 +1,109 @@
+---
+# playbooks/reindex-qdrant.yml
+#
+# Re-index the Qdrant vector database by running the embedding pipeline
+# inside the backend container. This reads all nodes from Neo4j, generates
+# embeddings via fastembed, and upserts them to Qdrant.
+#
+# Usage:
+#   # Re-index DEV (incremental — updates existing, adds new)
+#   ansible-playbook playbooks/reindex-qdrant.yml -l dev
+#
+#   # Re-index DEV (clean — delete collection, rebuild from scratch)
+#   ansible-playbook playbooks/reindex-qdrant.yml -l dev -e clean_reindex=true
+#
+#   # Re-index PROD
+#   ansible-playbook playbooks/reindex-qdrant.yml -l prod
+#
+#   # Re-index PROD (clean)
+#   ansible-playbook playbooks/reindex-qdrant.yml -l prod -e clean_reindex=true
+
+- name: "Re-index Qdrant vector database"
+  hosts: app_vms
+  become: true
+  gather_facts: false
+
+  vars:
+    clean_reindex: false
+    backend_container: "colossus-backend"
+
+  tasks:
+    - name: "Confirm PROD re-index"
+      ansible.builtin.pause:
+        prompt: >
+          ⚠️  You are re-indexing Qdrant on PRODUCTION.
+          {% if clean_reindex | bool %}This is a CLEAN re-index (collection will be deleted first).{% endif %}
+          Press Enter to continue or Ctrl+C to abort.
+      when: "'prod' in group_names"
+
+    - name: "Verify backend container is running"
+      ansible.builtin.command:
+        cmd: "podman ps --filter name={{ backend_container }} --format '{%raw%}{{.Names}} {{.Status}}{%endraw%}'"
+      register: container_status
+      changed_when: false
+
+    - name: "Fail if backend container is not running"
+      ansible.builtin.fail:
+        msg: >
+          Backend container '{{ backend_container }}' is not running.
+          Status: {{ container_status.stdout | default('not found') }}
+      when: backend_container not in (container_status.stdout | default(''))
+
+    - name: "Display container status"
+      ansible.builtin.debug:
+        msg: "Container: {{ container_status.stdout }}"
+
+    - name: "Run embedding pipeline"
+      ansible.builtin.command:
+        cmd: >-
+          podman exec {{ backend_container }}
+          colossus-backend embed
+          {% if clean_reindex | bool %}--clean{% endif %}
+      register: embed_result
+      changed_when: true
+
+    - name: "Parse embedding result"
+      ansible.builtin.set_fact:
+        embed_output: "{{ embed_result.stdout | from_json }}"
+      when: embed_result.rc == 0
+
+    - name: "Display embedding result"
+      ansible.builtin.debug:
+        msg: |
+          ═══════════════════════════════════════════
+          Qdrant Re-index Complete
+          ═══════════════════════════════════════════
+          Status:         {{ embed_output.status }}
+          Total nodes:    {{ embed_output.total_nodes }}
+          Embedded:       {{ embed_output.embedded_count }}
+          Duration:       {{ embed_output.duration_seconds | round(1) }}s
+          Errors:         {{ embed_output.errors | length }}
+          Clean re-index: {{ clean_reindex | bool }}
+          ───────────────────────────────────────────
+          Nodes by type:
+          {% for type, count in embed_output.nodes_by_type.items() %}
+            {{ type }}: {{ count }}
+          {% endfor %}
+          ═══════════════════════════════════════════
+      when: embed_result.rc == 0
+
+    - name: "Verify embedding succeeded"
+      ansible.builtin.assert:
+        that:
+          - embed_output.status == "success"
+          - embed_output.embedded_count | int > 0
+          - embed_output.errors | length == 0
+        fail_msg: >
+          Embedding pipeline reported issues:
+          Status: {{ embed_output.status }}
+          Embedded: {{ embed_output.embedded_count }}
+          Errors: {{ embed_output.errors }}
+      when: embed_result.rc == 0
+
+    - name: "Report embedding failure"
+      ansible.builtin.fail:
+        msg: >
+          Embedding pipeline failed with exit code {{ embed_result.rc }}.
+          stdout: {{ embed_result.stdout | default('(empty)') }}
+          stderr: {{ embed_result.stderr | default('(empty)') }}
+      when: embed_result.rc != 0
