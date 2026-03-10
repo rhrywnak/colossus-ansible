@@ -57,7 +57,7 @@
       ansible.builtin.command:
         cmd: >-
           podman exec {{ backend_container }}
-          colossus-backend embed
+          ./colossus-legal-backend embed
           {% if clean_reindex | bool %}--clean{% endif %}
       register: embed_result
       changed_when: true
