@@ -64,7 +64,7 @@
 
     - name: "Parse embedding result"
       ansible.builtin.set_fact:
-        embed_output: "{{ embed_result.stdout | from_json }}"
+        embed_output: "{{ embed_result.stdout_lines | last | from_json }}"
       when: embed_result.rc == 0
 
     - name: "Display embedding result"
