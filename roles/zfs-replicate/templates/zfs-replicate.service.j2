@@ -1,0 +1,13 @@
+[Unit]
+Description=ZFS dataset replication to TrueNAS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/zfs-replicate.sh /etc/zfs-replicate/datasets.conf
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zfs-replicate
+# Generous timeout — first full send of large datasets may take a while
+TimeoutStartSec=3600

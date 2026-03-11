@@ -1,0 +1,12 @@
+---
+# ZFS replication datasets for pve-1 (PROD)
+# Note: prod-zfs/models will be added after PROD storage provisioning
+zfs_replicate_datasets:
+  - local: "prod-zfs/postgres"
+    remote: "pve-1/postgres"
+  - local: "prod-zfs/neo4j"
+    remote: "pve-1/neo4j"
+  - local: "prod-zfs/qdrant"
+    remote: "pve-1/qdrant"
+  - local: "prod-zfs/legal-docs"
+    remote: "pve-1/legal-docs"

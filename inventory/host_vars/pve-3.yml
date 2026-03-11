@@ -1,0 +1,11 @@
+---
+# ZFS replication datasets for pve-3 (Infrastructure)
+zfs_replicate_datasets:
+  - local: "pbs-zfs/services/authentik/postgres"
+    remote: "pve-3/authentik-postgres"
+  - local: "pbs-zfs/services/authentik/data"
+    remote: "pve-3/authentik-data"
+  - local: "pbs-zfs/services/semaphore/data"
+    remote: "pve-3/semaphore-data"
+  - local: "pbs-zfs/services/semaphore/sync"
+    remote: "pve-3/semaphore-sync"

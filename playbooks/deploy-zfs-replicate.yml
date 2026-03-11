@@ -1,0 +1,17 @@
+---
+# Deploy ZFS replication to TrueNAS on all Proxmox hosts
+#
+# Usage:
+#   ansible-playbook playbooks/deploy-zfs-replicate.yml
+#
+# Or target a single host:
+#   ansible-playbook playbooks/deploy-zfs-replicate.yml -l pve-1
+#
+- name: Deploy ZFS replication to Proxmox hosts
+  hosts: proxmox
+  become: true
+
+  tasks:
+    - name: Include zfs-replicate role
+      ansible.builtin.include_role:
+        name: zfs-replicate

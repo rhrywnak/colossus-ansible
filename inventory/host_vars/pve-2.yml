@@ -1,0 +1,13 @@
+---
+# ZFS replication datasets for pve-2 (DEV)
+zfs_replicate_datasets:
+  - local: "dev-zfs/postgres"
+    remote: "pve-2/postgres"
+  - local: "dev-zfs/neo4j"
+    remote: "pve-2/neo4j"
+  - local: "dev-zfs/qdrant"
+    remote: "pve-2/qdrant"
+  - local: "dev-zfs/legal-docs"
+    remote: "pve-2/legal-docs"
+  - local: "dev-zfs/models"
+    remote: "pve-2/models"

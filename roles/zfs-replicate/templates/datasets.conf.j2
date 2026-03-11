@@ -1,0 +1,9 @@
+# ZFS Replication Dataset Configuration
+# Managed by Ansible — do not edit manually
+# Generated: {{ ansible_date_time.iso8601 }}
+# Host: {{ inventory_hostname }}
+#
+# Format: <local_dataset> <remote_path>
+{% for ds in zfs_replicate_datasets %}
+{{ ds.local }}  {{ ds.remote }}
+{% endfor %}

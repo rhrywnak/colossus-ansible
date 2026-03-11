@@ -1,0 +1,62 @@
+---
+- name: Create zfs-replicate config directory
+  ansible.builtin.file:
+    path: /etc/zfs-replicate
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy replication script
+  ansible.builtin.copy:
+    src: zfs-replicate.sh
+    dest: /usr/local/bin/zfs-replicate.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy dataset configuration
+  ansible.builtin.template:
+    src: datasets.conf.j2
+    dest: /etc/zfs-replicate/datasets.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Deploy systemd service unit
+  ansible.builtin.template:
+    src: zfs-replicate.service.j2
+    dest: /etc/systemd/system/zfs-replicate.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd daemon
+
+- name: Deploy systemd timer unit
+  ansible.builtin.template:
+    src: zfs-replicate.timer.j2
+    dest: /etc/systemd/system/zfs-replicate.timer
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd daemon
+
+- name: Flush handlers to reload systemd before enabling timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start zfs-replicate timer
+  ansible.builtin.systemd:
+    name: zfs-replicate.timer
+    enabled: true
+    state: started
+
+- name: Verify SSH connectivity to TrueNAS
+  ansible.builtin.shell: >
+    ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    {{ zfs_replicate_truenas_user }}@{{ zfs_replicate_truenas_host }} 'echo ok'
+  changed_when: false
+  register: ssh_test
+
+- name: Display SSH test result
+  ansible.builtin.debug:
+    msg: "SSH to TrueNAS: {{ 'OK' if ssh_test.rc == 0 else 'FAILED' }}"

@@ -1,0 +1,14 @@
+---
+# ZFS Replication defaults
+zfs_replicate_truenas_host: "10.10.0.38"
+zfs_replicate_truenas_user: "root"
+zfs_replicate_truenas_base: "Pool-1/backups/zfs-replica"
+zfs_replicate_snap_prefix: "autoreplica"
+zfs_replicate_local_retention: 7
+zfs_replicate_remote_retention: 14
+zfs_replicate_schedule: "*-*-* 03:00:00"
+zfs_replicate_random_delay_sec: 900
+
+# Per-host dataset list — MUST be overridden in host_vars
+# Format: list of dicts with 'local' and 'remote' keys
+zfs_replicate_datasets: []

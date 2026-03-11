@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily ZFS replication to TrueNAS
+
+[Timer]
+OnCalendar={{ zfs_replicate_schedule }}
+RandomizedDelaySec={{ zfs_replicate_random_delay_sec }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
