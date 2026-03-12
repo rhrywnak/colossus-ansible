@@ -716,6 +716,7 @@
   vars:
     sync_staging_dir: "/tmp/qdrant-sync"
     sync_archive_dir: "/opt/db-sync/qdrant"
+    collection: "paper_chunks"
     prod_backup_filename: "prod-pre-sync.snapshot"
     dev_snapshot_filename: "dev.snapshot"
 
