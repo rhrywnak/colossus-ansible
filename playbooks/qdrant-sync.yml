@@ -139,7 +139,7 @@
     - name: "GATE: Assert DEV Qdrant is healthy"
       ansible.builtin.assert:
         that:
-          - "'ok' in dev_health.content"
+          - "'ok' in dev_health.content or 'healthz check passed' in dev_health.content"
         fail_msg: >
           DEV Qdrant is not healthy. Response: {{ dev_health.content | default('no response') }}
           Check: curl -s {{ qdrant_dev_url }}/healthz
@@ -157,7 +157,7 @@
     - name: "GATE: Assert PROD Qdrant is healthy"
       ansible.builtin.assert:
         that:
-          - "'ok' in prod_health.content"
+          - "'ok' in prod_health.content or 'healthz check passed' in prod_health.content"
         fail_msg: >
           PROD Qdrant is not healthy. Response: {{ prod_health.content | default('no response') }}
           Check: curl -s {{ qdrant_prod_url }}/healthz
