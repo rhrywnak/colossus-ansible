@@ -10,3 +10,5 @@ zfs_replicate_datasets:
     remote: "pve-1/qdrant"
   - local: "prod-zfs/legal-docs"
     remote: "pve-1/legal-docs"
+  - local: "prod-zfs/models"
+    remote: "pve-1/models"
