@@ -1,0 +1,821 @@
+---
+# playbooks/qdrant-sync.yml
+#
+# Qdrant DEV → PROD Full Sync (Automated, Monolithic)
+# Semaphore Template: "Qdrant Dev→Prod Sync"
+#
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  PURPOSE                                                         ║
+# ║                                                                   ║
+# ║  Replaces the Qdrant 'paper_chunks' collection on PROD with a    ║
+# ║  copy from DEV. This is a DESTRUCTIVE operation — the PROD        ║
+# ║  collection will be overwritten (or created if it doesn't exist). ║
+# ║  A PROD snapshot is taken first as a rollback safety net.         ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+#
+# Why monolithic (single file)?
+# ─────────────────────────────────────────────────────────────────
+# Qdrant sync is the simplest of our three database syncs:
+#   - Everything happens via HTTP API (REST calls with curl)
+#   - No service stops, no container exec, no SSH into VMs
+#   - Snapshots are binary files downloaded/uploaded via HTTP
+#   - The Qdrant API handles collection creation automatically
+#
+# How Qdrant snapshots work (quick primer):
+# ─────────────────────────────────────────────────────────────────
+# Qdrant is a vector database — it stores "points" (vectors +
+# metadata) organized into "collections." Think of a collection
+# like a table in a relational database.
+#
+# A Qdrant snapshot captures the complete state of a collection:
+#   - All vectors (the numerical embeddings)
+#   - All payloads (the metadata attached to each vector)
+#   - Collection configuration (dimension, distance metric, indexes)
+#
+# The snapshot API workflow:
+#   1. POST /collections/{name}/snapshots       → creates a snapshot
+#   2. GET  /collections/{name}/snapshots/{file} → downloads the file
+#   3. POST /collections/{name}/snapshots/upload → uploads + restores
+#
+# The upload endpoint with `?priority=snapshot` tells Qdrant to
+# replace the existing collection with the snapshot data. If the
+# collection doesn't exist, Qdrant creates it automatically.
+# This is why we don't need a separate "create collection" step
+# for PROD — the first sync creates it.
+#
+# PROD Qdrant note: As of this writing, PROD has NO paper_chunks
+# collection. The first run of this playbook will create it.
+# Subsequent runs will overwrite it with fresh DEV data.
+#
+# Phases executed in sequence:
+# ─────────────────────────────────────────────────────────────────
+#   Phase 1: Pre-flight    → Health checks, capture DEV point count
+#   Phase 2: Backup PROD   → Snapshot PROD collection (if it exists)
+#   Phase 3: Snapshot DEV  → Create + download DEV snapshot to controller
+#   Phase 4: Upload to PROD → Upload DEV snapshot to PROD (DESTRUCTIVE)
+#   Phase 5: Validate      → Point count parity check
+#   Phase 6: Archive       → Timestamp snapshots, symlink for rollback
+#
+# Backup naming convention:
+#   /opt/qdrant-sync/
+#     prod-pre-sync-20260311T130445.snapshot   ← PROD before sync
+#     dev-20260311T130445.snapshot             ← DEV data uploaded
+#     baseline-20260311T130445.json            ← Point count snapshot
+#     prod-latest.snapshot                     ← Symlink to latest
+#
+# To rollback (only if PROD had data before sync):
+#   curl -X POST -F "snapshot=@/opt/qdrant-sync/prod-latest.snapshot" \
+#     "http://10.10.100.110:6333/collections/paper_chunks/snapshots/upload?priority=snapshot"
+#
+# Prerequisites:
+#   sudo mkdir -p /opt/qdrant-sync && sudo chown $(whoami) /opt/qdrant-sync
+#   (only needed once per controller — workstation or CT-315)
+#
+# Reference:
+#   COLOSSUS_DEV_BACKUP_RESTORE_RUNBOOK_v1.md §5.1 (backup) and §5.2 (restore)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 1: Pre-flight Checks
+# ═══════════════════════════════════════════════════════════════════
+#
+# Verify that both DEV and PROD Qdrant instances are reachable and
+# healthy. Capture the DEV point count so we can validate after sync.
+#
+# Unlike PostgreSQL and Neo4j which run in containers on CoreOS VMs
+# (requiring SSH + podman exec), Qdrant exposes an HTTP API directly.
+# All our checks and operations use curl from the Ansible controller —
+# no SSH needed.
+#
+# Qdrant health endpoint: GET /healthz returns "ok" when healthy.
+# Collection info: GET /collections/{name} returns metadata including
+# the point count.
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 1 — Pre-flight Checks"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    # ── Qdrant Endpoints ──────────────────────────────────────────
+    # DEV Qdrant runs on VM-210 (same VM as PostgreSQL and Neo4j).
+    # PROD Qdrant runs on VM-110 (same VM as the other PROD databases).
+    # Port 6333 is Qdrant's default HTTP API port.
+    qdrant_dev_url: "http://10.10.100.200:6333"
+    qdrant_prod_url: "http://10.10.100.110:6333"
+
+    # ── Collection Name ───────────────────────────────────────────
+    # paper_chunks is the collection used by colossus-legal.
+    # It stores vector embeddings of legal document chunks.
+    collection: "paper_chunks"
+
+    # ── Controller Directories ────────────────────────────────────
+    sync_staging_dir: "/tmp/qdrant-sync"
+    sync_archive_dir: "/opt/qdrant-sync"
+
+  tasks:
+    # ── Create staging directory ──────────────────────────────────
+    - name: "Create staging directory on controller"
+      ansible.builtin.file:
+        path: "{{ sync_staging_dir }}"
+        state: directory
+        mode: '0750'
+
+    # ── Check DEV Qdrant health ───────────────────────────────────
+    # The /healthz endpoint returns a simple text response: "ok"
+    # If Qdrant is down, this task fails with a connection error.
+    #
+    # We use Ansible's `uri` module instead of shell+curl because:
+    #   1. It handles HTTP errors natively (fail on non-200)
+    #   2. It parses JSON responses automatically
+    #   3. It's idiomatic Ansible (not shelling out unnecessarily)
+    - name: "Check DEV Qdrant health"
+      ansible.builtin.uri:
+        url: "{{ qdrant_dev_url }}/healthz"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: dev_health
+
+    - name: "GATE: Assert DEV Qdrant is healthy"
+      ansible.builtin.assert:
+        that:
+          - "'ok' in dev_health.content"
+        fail_msg: >
+          DEV Qdrant is not healthy. Response: {{ dev_health.content | default('no response') }}
+          Check: curl -s {{ qdrant_dev_url }}/healthz
+        success_msg: "DEV Qdrant is healthy"
+
+    # ── Check PROD Qdrant health ──────────────────────────────────
+    - name: "Check PROD Qdrant health"
+      ansible.builtin.uri:
+        url: "{{ qdrant_prod_url }}/healthz"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: prod_health
+
+    - name: "GATE: Assert PROD Qdrant is healthy"
+      ansible.builtin.assert:
+        that:
+          - "'ok' in prod_health.content"
+        fail_msg: >
+          PROD Qdrant is not healthy. Response: {{ prod_health.content | default('no response') }}
+          Check: curl -s {{ qdrant_prod_url }}/healthz
+        success_msg: "PROD Qdrant is healthy"
+
+    # ── Get DEV collection info ───────────────────────────────────
+    # The collection endpoint returns a JSON object with metadata:
+    #   {
+    #     "result": {
+    #       "status": "green",
+    #       "points_count": 1234,
+    #       "vectors_count": 1234,
+    #       "config": { ... }
+    #     }
+    #   }
+    #
+    # We extract points_count — this is the primary metric we'll
+    # use to validate the sync worked.
+    - name: "Get DEV collection info"
+      ansible.builtin.uri:
+        url: "{{ qdrant_dev_url }}/collections/{{ collection }}"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: dev_collection_info
+
+    - name: "Parse DEV point count"
+      ansible.builtin.set_fact:
+        dev_point_count: "{{ dev_collection_info.json.result.points_count }}"
+
+    - name: "GATE: Assert DEV collection has data"
+      ansible.builtin.assert:
+        that:
+          - dev_point_count | int > 0
+        fail_msg: >
+          DEV collection '{{ collection }}' has {{ dev_point_count }} points — nothing to sync.
+          Is the collection populated?
+        success_msg: "DEV collection '{{ collection }}' has {{ dev_point_count }} points"
+
+    # ── Check if PROD collection exists ───────────────────────────
+    # PROD may not have the paper_chunks collection yet (first sync).
+    # We check by listing all collections and looking for ours.
+    #
+    # The /collections endpoint returns:
+    #   { "result": { "collections": [ {"name": "paper_chunks"}, ... ] } }
+    #
+    # If the collection doesn't exist, that's OK — the upload in
+    # Phase 4 will create it. We just need to know so we can:
+    #   1. Skip the PROD backup in Phase 2 (nothing to back up)
+    #   2. Set expectations in the summary output
+    - name: "List PROD collections"
+      ansible.builtin.uri:
+        url: "{{ qdrant_prod_url }}/collections"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: prod_collections
+
+    - name: "Check if PROD has '{{ collection }}' collection"
+      ansible.builtin.set_fact:
+        prod_collection_exists: "{{ collection in (prod_collections.json.result.collections | map(attribute='name') | list) }}"
+
+    # ── Get PROD point count (if collection exists) ───────────────
+    - name: "Get PROD collection info (if exists)"
+      ansible.builtin.uri:
+        url: "{{ qdrant_prod_url }}/collections/{{ collection }}"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: prod_collection_info
+      when: prod_collection_exists | bool
+
+    - name: "Parse PROD point count"
+      ansible.builtin.set_fact:
+        prod_point_count: "{{ prod_collection_info.json.result.points_count | default(0) }}"
+      when: prod_collection_exists | bool
+
+    - name: "Set PROD point count to 0 (collection does not exist)"
+      ansible.builtin.set_fact:
+        prod_point_count: 0
+      when: not (prod_collection_exists | bool)
+
+    # ── Save baseline to file ─────────────────────────────────────
+    - name: "Save baseline to staging directory"
+      ansible.builtin.copy:
+        content: |
+          {
+            "timestamp": "{{ ansible_date_time.iso8601 }}",
+            "collection": "{{ collection }}",
+            "dev": {
+              "points": {{ dev_point_count }}
+            },
+            "prod_before_sync": {
+              "collection_exists": {{ prod_collection_exists | lower }},
+              "points": {{ prod_point_count }}
+            }
+          }
+        dest: "{{ sync_staging_dir }}/baseline.json"
+        mode: '0640'
+
+    # ── Pre-flight summary ────────────────────────────────────────
+    - name: "═══ PHASE 1 — PRE-FLIGHT SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           QDRANT DEV→PROD SYNC — PRE-FLIGHT RESULTS
+          ═══════════════════════════════════════════════════════
+
+           DEV  ({{ qdrant_dev_url }}):
+             Health: ✓ ok
+             Collection '{{ collection }}': {{ dev_point_count }} points
+
+           PROD ({{ qdrant_prod_url }}):
+             Health: ✓ ok
+             Collection '{{ collection }}': {% if prod_collection_exists | bool %}EXISTS ({{ prod_point_count }} points){% else %}DOES NOT EXIST (will be created){% endif %}
+
+           Baseline saved to: {{ sync_staging_dir }}/baseline.json
+
+          ═══════════════════════════════════════════════════════
+           ALL CHECKS PASSED — proceeding to Phase 2
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 2: Backup PROD (Rollback Safety Net)
+# ═══════════════════════════════════════════════════════════════════
+#
+# If PROD already has the paper_chunks collection, create a snapshot
+# of it before we overwrite. This is the rollback safety net.
+#
+# If PROD does NOT have the collection (first sync), this entire
+# phase is skipped — there's nothing to back up.
+#
+# Qdrant snapshot workflow:
+#   1. POST to create the snapshot (Qdrant generates a filename)
+#   2. Extract the filename from the JSON response
+#   3. GET to download the snapshot file to the controller
+#
+# The snapshot filename format is:
+#   paper_chunks-<unique_id>-YYYY-MM-DD-HH-MM-SS.snapshot
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 2 — Backup PROD Qdrant"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    qdrant_prod_url: "http://10.10.100.110:6333"
+    collection: "paper_chunks"
+    sync_staging_dir: "/tmp/qdrant-sync"
+    prod_backup_filename: "prod-pre-sync.snapshot"
+
+  tasks:
+    # ── Re-check if PROD collection exists ────────────────────────
+    # We need to check again because Ansible variables from Phase 1
+    # don't carry across plays (set_fact is play-scoped when using
+    # localhost). This is a quick HTTP call, so the overhead is minimal.
+    - name: "List PROD collections"
+      ansible.builtin.uri:
+        url: "{{ qdrant_prod_url }}/collections"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: prod_collections
+
+    - name: "Check if PROD has '{{ collection }}' collection"
+      ansible.builtin.set_fact:
+        prod_collection_exists: "{{ collection in (prod_collections.json.result.collections | map(attribute='name') | list) }}"
+
+    # ── Skip message if no collection to back up ──────────────────
+    - name: "SKIP: No PROD collection to back up (first sync)"
+      ansible.builtin.debug:
+        msg: >
+          PROD does not have '{{ collection }}' collection — nothing to back up.
+          This is expected on the first sync. Phase 4 will create the collection.
+      when: not (prod_collection_exists | bool)
+
+    # ── Create PROD snapshot ──────────────────────────────────────
+    # POST /collections/paper_chunks/snapshots
+    # Response: { "result": { "name": "paper_chunks-123456-2026-03-11-13-04-45.snapshot" } }
+    #
+    # The snapshot is created server-side in Qdrant's snapshot directory.
+    # We then need to download it in a separate request.
+    - name: "Create PROD snapshot"
+      ansible.builtin.uri:
+        url: "{{ qdrant_prod_url }}/collections/{{ collection }}/snapshots"
+        method: POST
+        return_content: true
+        status_code: 200
+      register: prod_snapshot_response
+      when: prod_collection_exists | bool
+
+    # ── Extract snapshot filename ─────────────────────────────────
+    # The response JSON contains the auto-generated filename.
+    - name: "Extract PROD snapshot filename"
+      ansible.builtin.set_fact:
+        prod_snapshot_name: "{{ prod_snapshot_response.json.result.name }}"
+      when: prod_collection_exists | bool
+
+    # ── Download PROD snapshot ────────────────────────────────────
+    # GET /collections/paper_chunks/snapshots/<filename>
+    # This returns the binary snapshot file.
+    #
+    # We use shell+curl here instead of the `uri` module because
+    # Ansible's uri module doesn't handle binary file downloads well
+    # for larger files — it tries to load everything into memory.
+    # curl streams directly to disk.
+    - name: "Download PROD snapshot to controller"
+      ansible.builtin.shell: >
+        curl -s -o {{ sync_staging_dir }}/{{ prod_backup_filename }}
+        "{{ qdrant_prod_url }}/collections/{{ collection }}/snapshots/{{ prod_snapshot_name }}"
+      when: prod_collection_exists | bool
+
+    # ── Verify the PROD backup ────────────────────────────────────
+    - name: "Verify PROD backup file"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: prod_backup_stat
+      when: prod_collection_exists | bool
+
+    - name: "GATE: Assert PROD backup is valid"
+      ansible.builtin.assert:
+        that:
+          - prod_backup_stat.stat.exists
+          - prod_backup_stat.stat.size > 0
+        fail_msg: >
+          PROD snapshot backup failed — file is missing or empty at
+          {{ sync_staging_dir }}/{{ prod_backup_filename }}.
+        success_msg: >
+          PROD backup created: {{ prod_backup_stat.stat.size | human_readable }}
+      when: prod_collection_exists | bool
+
+    # ── Phase 2 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 2 — PROD BACKUP SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           PROD QDRANT BACKUP {% if prod_collection_exists | bool %}COMPLETE{% else %}SKIPPED (no collection){% endif %}
+
+          ═══════════════════════════════════════════════════════
+          {% if prod_collection_exists | bool %}
+           File:     {{ sync_staging_dir }}/{{ prod_backup_filename }}
+           Size:     {{ prod_backup_stat.stat.size | human_readable }}
+           Snapshot: {{ prod_snapshot_name }}
+
+           This backup is your rollback safety net.
+          {% else %}
+           PROD has no '{{ collection }}' collection yet.
+           No backup needed — Phase 4 will create the collection.
+           (There is nothing to rollback to if this is the first sync.)
+          {% endif %}
+          ═══════════════════════════════════════════════════════
+           Proceeding to Phase 3 — Snapshot DEV
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 3: Snapshot DEV (The Source Data)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Create a snapshot of the DEV paper_chunks collection and download
+# it to the controller. This is the data that will be uploaded to
+# PROD in Phase 4.
+#
+# Same workflow as Phase 2: POST to create, GET to download.
+# After this phase, the controller has:
+#   - prod-pre-sync.snapshot  (Phase 2, if PROD had data)
+#   - dev.snapshot             (this phase — source for PROD)
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 3 — Snapshot DEV Qdrant"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    qdrant_dev_url: "http://10.10.100.200:6333"
+    collection: "paper_chunks"
+    sync_staging_dir: "/tmp/qdrant-sync"
+    dev_snapshot_filename: "dev.snapshot"
+
+  tasks:
+    # ── Create DEV snapshot ───────────────────────────────────────
+    - name: "Create DEV snapshot"
+      ansible.builtin.uri:
+        url: "{{ qdrant_dev_url }}/collections/{{ collection }}/snapshots"
+        method: POST
+        return_content: true
+        status_code: 200
+      register: dev_snapshot_response
+
+    # ── Extract snapshot filename ─────────────────────────────────
+    - name: "Extract DEV snapshot filename"
+      ansible.builtin.set_fact:
+        dev_snapshot_name: "{{ dev_snapshot_response.json.result.name }}"
+
+    # ── Download DEV snapshot ─────────────────────────────────────
+    # curl streams the binary file directly to disk.
+    - name: "Download DEV snapshot to controller"
+      ansible.builtin.shell: >
+        curl -s -o {{ sync_staging_dir }}/{{ dev_snapshot_filename }}
+        "{{ qdrant_dev_url }}/collections/{{ collection }}/snapshots/{{ dev_snapshot_name }}"
+
+    # ── Verify the DEV snapshot ───────────────────────────────────
+    - name: "Verify DEV snapshot file"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ dev_snapshot_filename }}"
+      register: dev_snapshot_stat
+
+    - name: "GATE: Assert DEV snapshot is valid"
+      ansible.builtin.assert:
+        that:
+          - dev_snapshot_stat.stat.exists
+          - dev_snapshot_stat.stat.size > 0
+        fail_msg: >
+          DEV snapshot failed — file is missing or empty at
+          {{ sync_staging_dir }}/{{ dev_snapshot_filename }}.
+        success_msg: >
+          DEV snapshot created: {{ dev_snapshot_stat.stat.size | human_readable }}
+
+    # ── Phase 3 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 3 — DEV SNAPSHOT SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           DEV QDRANT SNAPSHOT COMPLETE
+          ═══════════════════════════════════════════════════════
+
+           File:         {{ sync_staging_dir }}/{{ dev_snapshot_filename }}
+           Size:         {{ dev_snapshot_stat.stat.size | human_readable }}
+           Qdrant name:  {{ dev_snapshot_name }}
+
+          ═══════════════════════════════════════════════════════
+           Proceeding to Phase 4 — Upload to PROD
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 4: Upload DEV Snapshot to PROD (⚠ DESTRUCTIVE ⚠)
+# ═══════════════════════════════════════════════════════════════════
+#
+# THIS PHASE OVERWRITES THE PROD COLLECTION (or creates it).
+#
+# How the upload/restore works:
+#   POST /collections/paper_chunks/snapshots/upload?priority=snapshot
+#   Content-Type: multipart/form-data
+#   Body: the snapshot file
+#
+# The `?priority=snapshot` parameter tells Qdrant:
+#   "Use the snapshot data as the source of truth — replace whatever
+#    currently exists in the collection with this snapshot."
+#
+# If the collection doesn't exist on PROD, Qdrant creates it
+# automatically with the same configuration (dimensions, distance
+# metric, etc.) that was captured in the snapshot.
+#
+# No transfer phase needed (unlike PostgreSQL):
+# ─────────────────────────────────────────────────────────────────
+# With PostgreSQL, we SCP'd the dump to the PROD VM and then ran
+# psql inside the container. With Qdrant, we upload directly via
+# HTTP from the controller — no need to stage the file on the VM.
+# curl streams the file directly to Qdrant's API.
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 4 — ⚠ Upload DEV Snapshot to PROD (DESTRUCTIVE)"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    qdrant_prod_url: "http://10.10.100.110:6333"
+    collection: "paper_chunks"
+    sync_staging_dir: "/tmp/qdrant-sync"
+    dev_snapshot_filename: "dev.snapshot"
+
+  tasks:
+    # ── Verify DEV snapshot exists ────────────────────────────────
+    - name: "GATE: Verify DEV snapshot exists on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ dev_snapshot_filename }}"
+      register: dev_snapshot_check
+
+    - name: "GATE: Assert DEV snapshot is present"
+      ansible.builtin.assert:
+        that:
+          - dev_snapshot_check.stat.exists
+          - dev_snapshot_check.stat.size > 0
+        fail_msg: >
+          DEV snapshot not found at {{ sync_staging_dir }}/{{ dev_snapshot_filename }}.
+          Did Phase 3 complete successfully?
+        success_msg: "DEV snapshot verified ({{ dev_snapshot_check.stat.size | human_readable }})"
+
+    # ── Upload snapshot to PROD ───────────────────────────────────
+    # This is the critical step. curl uploads the snapshot file as
+    # a multipart form POST to the Qdrant snapshot upload endpoint.
+    #
+    # Flags explained:
+    #   -s                     → silent (no progress bar)
+    #   -o /tmp/qdrant_...     → write response body to file (for error checking)
+    #   -w "%{http_code}"      → print just the HTTP status code to stdout
+    #   -X POST                → HTTP POST method
+    #   -H "Content-Type: ..." → required header for multipart upload
+    #   -F "snapshot=@..."     → attach the file as form field "snapshot"
+    #   ?priority=snapshot     → tells Qdrant to use snapshot data as truth
+    #
+    # We capture the HTTP status code to check for success.
+    # A 200 response means the restore was successful.
+    - name: "⚠ DESTRUCTIVE: Upload DEV snapshot to PROD Qdrant"
+      ansible.builtin.shell: >
+        curl -s
+        -o /tmp/qdrant_restore_response.json
+        -w "%{http_code}"
+        -X POST
+        -H "Content-Type: multipart/form-data"
+        -F "snapshot=@{{ sync_staging_dir }}/{{ dev_snapshot_filename }}"
+        "{{ qdrant_prod_url }}/collections/{{ collection }}/snapshots/upload?priority=snapshot"
+      register: upload_result
+
+    # ── Check upload response ─────────────────────────────────────
+    # curl's -w "%{http_code}" writes the status code to stdout.
+    # We check that it's 200 (success).
+    - name: "GATE: Assert upload succeeded (HTTP 200)"
+      ansible.builtin.assert:
+        that:
+          - upload_result.stdout == "200"
+        fail_msg: >
+          Qdrant snapshot upload FAILED (HTTP {{ upload_result.stdout }}).
+          Response body saved to /tmp/qdrant_restore_response.json on controller.
+          Check: cat /tmp/qdrant_restore_response.json
+        success_msg: "Snapshot upload successful (HTTP 200)"
+
+    # ── Clean up response file ────────────────────────────────────
+    - name: "Clean up upload response file"
+      ansible.builtin.file:
+        path: /tmp/qdrant_restore_response.json
+        state: absent
+
+    # ── Phase 4 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 4 — UPLOAD SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           ⚠ PROD QDRANT COLLECTION REPLACED WITH DEV DATA
+          ═══════════════════════════════════════════════════════
+
+           Collection: {{ collection }}
+           Source:     {{ sync_staging_dir }}/{{ dev_snapshot_filename }}
+           HTTP:       {{ upload_result.stdout }} (success)
+
+          ═══════════════════════════════════════════════════════
+           Proceeding to Phase 5 — Validate
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 5: Validate Sync
+# ═══════════════════════════════════════════════════════════════════
+#
+# Confirms PROD now matches DEV by comparing:
+#   1. Point counts (PROD must equal DEV)
+#   2. Collection exists on PROD (it should now)
+#   3. DEV unchanged (no side effects)
+#
+# If validation fails, rollback using the PROD backup from Phase 2
+# (if one was created — first sync has no rollback).
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 5 — Validate Sync"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    qdrant_dev_url: "http://10.10.100.200:6333"
+    qdrant_prod_url: "http://10.10.100.110:6333"
+    collection: "paper_chunks"
+
+  tasks:
+    # ── Get PROD collection info (post-sync) ──────────────────────
+    # The collection should now exist on PROD, even if this is the
+    # first sync (the upload creates it).
+    - name: "Get PROD collection info (post-sync)"
+      ansible.builtin.uri:
+        url: "{{ qdrant_prod_url }}/collections/{{ collection }}"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: prod_post_info
+
+    - name: "Parse PROD post-sync point count"
+      ansible.builtin.set_fact:
+        prod_post_points: "{{ prod_post_info.json.result.points_count }}"
+
+    # ── Get DEV collection info (verify unchanged) ────────────────
+    - name: "Get DEV collection info (verify unchanged)"
+      ansible.builtin.uri:
+        url: "{{ qdrant_dev_url }}/collections/{{ collection }}"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: dev_post_info
+
+    - name: "Parse DEV post-sync point count"
+      ansible.builtin.set_fact:
+        dev_post_points: "{{ dev_post_info.json.result.points_count }}"
+
+    # ── Parity check ──────────────────────────────────────────────
+    # The critical assertion: PROD point count must match DEV.
+    - name: "GATE: Assert PROD point count matches DEV"
+      ansible.builtin.assert:
+        that:
+          - prod_post_points | int == dev_post_points | int
+        fail_msg: >
+          POINT COUNT MISMATCH!
+          PROD: {{ prod_post_points }} points
+          DEV:  {{ dev_post_points }} points
+          The sync may have failed. Consider rollback.
+        success_msg: >
+          PARITY CONFIRMED: PROD and DEV both have {{ prod_post_points }} points
+
+    # ── Phase 5 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 5 — VALIDATION SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           QDRANT SYNC VALIDATION
+          ═══════════════════════════════════════════════════════
+
+           PROD ({{ qdrant_prod_url }}) — post-sync:
+             Collection '{{ collection }}': {{ prod_post_points }} points
+
+           DEV  ({{ qdrant_dev_url }}) — unchanged:
+             Collection '{{ collection }}': {{ dev_post_points }} points
+
+           Parity: ✓ PROD ({{ prod_post_points }}) == DEV ({{ dev_post_points }})
+
+          ═══════════════════════════════════════════════════════
+           VALIDATION PASSED
+           Proceeding to Phase 6 — Archive
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 6: Archive Snapshots
+# ═══════════════════════════════════════════════════════════════════
+#
+# Move staging files to the permanent archive with timestamps.
+# Same pattern as the PostgreSQL sync archive phase.
+#
+# Note: The PROD backup may not exist if this was the first sync
+# (no collection to back up). The archive tasks for the PROD
+# snapshot use `when:` conditionals to handle this gracefully.
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 6 — Archive Sync Snapshots"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    sync_staging_dir: "/tmp/qdrant-sync"
+    sync_archive_dir: "/opt/qdrant-sync"
+    prod_backup_filename: "prod-pre-sync.snapshot"
+    dev_snapshot_filename: "dev.snapshot"
+
+  tasks:
+    # ── Generate timestamp ────────────────────────────────────────
+    - name: "Generate archive timestamp"
+      ansible.builtin.set_fact:
+        sync_ts: "{{ ansible_date_time.iso8601_basic_short }}"
+
+    # ── Create archive directory ──────────────────────────────────
+    - name: "Ensure archive directory exists"
+      ansible.builtin.file:
+        path: "{{ sync_archive_dir }}"
+        state: directory
+        mode: '0750'
+
+    # ── Check if PROD backup exists (may not on first sync) ───────
+    - name: "Check if PROD backup exists"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: prod_backup_exists
+
+    # ── Archive PROD snapshot (if it exists) ──────────────────────
+    - name: "Archive PROD snapshot → prod-pre-sync-{{ sync_ts }}.snapshot"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+        dest: "{{ sync_archive_dir }}/prod-pre-sync-{{ sync_ts }}.snapshot"
+        remote_src: true
+        mode: '0640'
+      when: prod_backup_exists.stat.exists
+
+    # ── Create "latest" symlink (if PROD backup exists) ───────────
+    - name: "Update prod-latest.snapshot symlink"
+      ansible.builtin.file:
+        src: "{{ sync_archive_dir }}/prod-pre-sync-{{ sync_ts }}.snapshot"
+        dest: "{{ sync_archive_dir }}/prod-latest.snapshot"
+        state: link
+        force: true
+      when: prod_backup_exists.stat.exists
+
+    # ── Archive DEV snapshot ──────────────────────────────────────
+    - name: "Archive DEV snapshot → dev-{{ sync_ts }}.snapshot"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/{{ dev_snapshot_filename }}"
+        dest: "{{ sync_archive_dir }}/dev-{{ sync_ts }}.snapshot"
+        remote_src: true
+        mode: '0640'
+
+    # ── Archive baseline ──────────────────────────────────────────
+    - name: "Archive baseline → baseline-{{ sync_ts }}.json"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/baseline.json"
+        dest: "{{ sync_archive_dir }}/baseline-{{ sync_ts }}.json"
+        remote_src: true
+        mode: '0640'
+
+    # ── Clean up staging directory ────────────────────────────────
+    - name: "Remove staging directory"
+      ansible.builtin.file:
+        path: "{{ sync_staging_dir }}"
+        state: absent
+
+    # ── List archive contents ─────────────────────────────────────
+    - name: "List archive directory"
+      ansible.builtin.find:
+        paths: "{{ sync_archive_dir }}"
+        file_type: any
+      register: archive_contents
+
+    # ── Final summary ─────────────────────────────────────────────
+    - name: "═══ QDRANT SYNC COMPLETE ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           ✓ QDRANT DEV → PROD SYNC COMPLETE
+          ═══════════════════════════════════════════════════════
+           Timestamp: {{ ansible_date_time.iso8601 }}
+
+           Archived to {{ sync_archive_dir }}:
+          {% if prod_backup_exists.stat.exists %}
+             prod-pre-sync-{{ sync_ts }}.snapshot  ← PROD before sync
+             prod-latest.snapshot                   → symlink to latest
+          {% else %}
+             (no PROD backup — first sync, collection was created)
+          {% endif %}
+             dev-{{ sync_ts }}.snapshot            ← DEV data uploaded
+             baseline-{{ sync_ts }}.json           ← Point count snapshot
+
+           Archive contains {{ archive_contents.files | length }} file(s)
+
+           PROD Qdrant '{{ collection }}' now matches DEV.
+
+          {% if prod_backup_exists.stat.exists %}
+           To rollback:
+             curl -X POST \
+               -F "snapshot=@{{ sync_archive_dir }}/prod-latest.snapshot" \
+               "http://10.10.100.110:6333/collections/paper_chunks/snapshots/upload?priority=snapshot"
+          {% else %}
+           To remove collection (no prior data to restore):
+             curl -X DELETE "http://10.10.100.110:6333/collections/paper_chunks"
+          {% endif %}
+          ═══════════════════════════════════════════════════════

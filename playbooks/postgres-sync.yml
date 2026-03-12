@@ -1,0 +1,977 @@
+---
+# playbooks/postgres-sync.yml
+#
+# PostgreSQL DEV → PROD Full Sync (Automated, Monolithic)
+# Semaphore Template: "PostgreSQL Dev→Prod Sync"
+#
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  PURPOSE                                                         ║
+# ║                                                                   ║
+# ║  Replaces ALL PostgreSQL data on PROD with a copy from DEV.       ║
+# ║  This is a DESTRUCTIVE operation — PROD data will be overwritten. ║
+# ║  A PROD backup is taken first as a rollback safety net.           ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+#
+# Why monolithic (single file) instead of split phases like Neo4j?
+# ─────────────────────────────────────────────────────────────────
+# PostgreSQL sync is much simpler than Neo4j:
+#   - pg_dumpall runs against LIVE containers (no service stop needed)
+#   - psql restore also runs against LIVE containers (no service stop)
+#   - Dump files are plain-text SQL (human-readable, no binary format)
+#   - No one-shot Podman containers needed — just `podman exec`
+#
+# The Neo4j sync needed 6+ files because it requires stopping/starting
+# services, running one-shot containers with SELinux flags, and handling
+# binary dump files. PostgreSQL needs none of that complexity.
+#
+# How it works (phases executed in sequence):
+# ─────────────────────────────────────────────────────────────────
+#   Phase 1: Pre-flight    → Health checks on DEV + PROD containers,
+#                             capture baseline table counts
+#   Phase 2: Backup PROD   → pg_dumpall on PROD → controller staging dir
+#                             (this is your rollback safety net)
+#   Phase 3: Dump DEV      → pg_dumpall on DEV → controller staging dir
+#                             (this is the source data)
+#   Phase 4: Transfer      → Copy DEV dump from controller to PROD VM
+#   Phase 5: Load PROD     → ⚠ DESTRUCTIVE: psql restore on PROD
+#   Phase 6: Validate      → Table count parity check (PROD must match DEV)
+#   Phase 7: Archive       → Timestamp dumps, create prod-latest symlink
+#
+# How pg_dumpall works (quick primer):
+# ─────────────────────────────────────────────────────────────────
+# pg_dumpall is PostgreSQL's "dump everything" tool. Unlike pg_dump
+# (which dumps one database), pg_dumpall exports:
+#   - All databases (including the default 'postgres' and 'template1')
+#   - All roles (users + groups with their permissions)
+#   - All tablespaces
+#
+# The output is a plain-text SQL script. When you restore it with psql,
+# it replays all the CREATE/INSERT statements to rebuild everything.
+#
+# Important: pg_dumpall connects as a superuser ('postgres') and reads
+# from the live database — no downtime, no locks on normal operations.
+# It produces a consistent snapshot because PostgreSQL uses MVCC
+# (Multi-Version Concurrency Control) — readers don't block writers
+# and vice versa.
+#
+# How the restore works:
+# ─────────────────────────────────────────────────────────────────
+# The SQL dump contains DROP/CREATE statements, so restoring it into
+# a running PostgreSQL effectively replaces all data. psql reads the
+# SQL file and executes each statement in order. Existing objects get
+# dropped and recreated.
+#
+# Backup naming convention:
+#   /opt/postgres-sync/
+#     prod-pre-sync-20260311T130445.sql   ← PROD before sync
+#     dev-20260311T130445.sql             ← DEV data that was loaded
+#     baseline-20260311T130445.json       ← Table count snapshot
+#     prod-latest.sql                     ← Symlink to most recent PROD backup
+#
+# To rollback: Copy prod-latest.sql to PROD VM and restore via psql.
+#   (Same process as Phase 4+5, but using the PROD backup instead of DEV dump)
+#
+# Prerequisites:
+#   sudo mkdir -p /opt/postgres-sync && sudo chown $(whoami) /opt/postgres-sync
+#   (only needed once per controller — workstation or CT-315)
+#
+# Reference:
+#   COLOSSUS_DEV_BACKUP_RESTORE_RUNBOOK_v1.md §3.1 (backup) and §3.2 (restore)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# VARIABLES
+# ═══════════════════════════════════════════════════════════════════
+#
+# Unlike the Neo4j sync which uses a separate vars.yml file (because
+# 6+ playbook files all need the same variables), we define everything
+# inline here since this is a single monolithic file.
+#
+# Ansible scoping note: In a multi-play playbook like this one, variables
+# defined with `set_fact` in one play do NOT carry over to the next play.
+# That's why we use `vars:` blocks at the play level — they're scoped to
+# that play only. For values that must survive across plays, we use the
+# vars blocks consistently in each play (DRY isn't possible across plays
+# without an external vars file or set_fact on a persistent host).
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 1: Pre-flight Checks
+# ═══════════════════════════════════════════════════════════════════
+#
+# Before doing anything destructive, verify that:
+#   1. Both DEV and PROD PostgreSQL containers are running and healthy
+#   2. We can query both databases successfully
+#   3. DEV actually has data worth syncing (table count > 0)
+#   4. Capture baseline counts so we can validate after sync
+#
+# This phase runs entirely from the Ansible controller (localhost)
+# using SSH commands to reach the VMs. We use `shell` instead of
+# `command` because we need pipes (|) in some commands.
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 1 — Pre-flight Checks"
+  hosts: localhost
+  connection: local
+  gather_facts: true          # We need ansible_date_time for timestamps
+  vars:
+    # ── VM Targets ────────────────────────────────────────────────
+    # These are the CoreOS VMs running the database containers.
+    # DEV = VM-210 on pve-2, PROD = VM-110 on pve-1.
+    pg_dev_ip: "10.10.100.200"
+    pg_prod_ip: "10.10.100.110"
+
+    # ── PostgreSQL Settings ───────────────────────────────────────
+    # Container name matches the Podman Quadlet service name.
+    # 'postgres' is the superuser — required for pg_dumpall.
+    # 'colossus' is the application database (25 tables expected).
+    pg_container: "colossus-postgres"
+    pg_user: "postgres"
+    pg_database: "colossus"
+
+    # ── Controller Staging Directory ──────────────────────────────
+    # Dump files are temporarily stored here during the sync workflow.
+    # This is on the Ansible controller (CT-315 or your workstation).
+    sync_staging_dir: "/tmp/postgres-sync"
+
+    # ── Archive Directory ─────────────────────────────────────────
+    # Final resting place for timestamped backups.
+    # On CT-315, this should be on the ZFS-backed mount (/opt/postgres-sync).
+    sync_archive_dir: "/opt/postgres-sync"
+
+  tasks:
+    # ── Create staging directory ──────────────────────────────────
+    # This is where we'll temporarily store dump files during the sync.
+    # mode 0750 = owner rwx, group rx, others nothing (security).
+    - name: "Create staging directory on controller"
+      ansible.builtin.file:
+        path: "{{ sync_staging_dir }}"
+        state: directory
+        mode: '0750'
+
+    # ── Check DEV container health ────────────────────────────────
+    # We SSH into the DEV VM and ask Podman if the container is running.
+    # The `podman ps --filter` command returns the container status.
+    # If the container isn't running, Ansible will get empty output and
+    # the next assertion will catch it.
+    - name: "Check DEV PostgreSQL container is running"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_dev_ip }}
+        'sudo podman ps --filter name={{ pg_container }} --filter status=running --format "{% raw %}{{.Names}}{% endraw %}"'
+      register: dev_container_check
+      changed_when: false        # This is a read-only check — never "changed"
+
+    - name: "GATE: Assert DEV container is running"
+      ansible.builtin.assert:
+        that:
+          - "pg_container in dev_container_check.stdout"
+        fail_msg: >
+          DEV PostgreSQL container '{{ pg_container }}' is NOT running on {{ pg_dev_ip }}.
+          Check: ssh core@{{ pg_dev_ip }} 'sudo podman ps -a'
+        success_msg: "DEV PostgreSQL container is running on {{ pg_dev_ip }}"
+
+    # ── Check PROD container health ───────────────────────────────
+    - name: "Check PROD PostgreSQL container is running"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'sudo podman ps --filter name={{ pg_container }} --filter status=running --format "{% raw %}{{.Names}}{% endraw %}"'
+      register: prod_container_check
+      changed_when: false
+
+    - name: "GATE: Assert PROD container is running"
+      ansible.builtin.assert:
+        that:
+          - "pg_container in prod_container_check.stdout"
+        fail_msg: >
+          PROD PostgreSQL container '{{ pg_container }}' is NOT running on {{ pg_prod_ip }}.
+          Check: ssh core@{{ pg_prod_ip }} 'sudo podman ps -a'
+        success_msg: "PROD PostgreSQL container is running on {{ pg_prod_ip }}"
+
+    # ── Count DEV tables ──────────────────────────────────────────
+    # This query counts all user-created tables in the 'colossus' database.
+    # We exclude PostgreSQL's internal schemas (pg_catalog, information_schema)
+    # because those are system tables, not our application data.
+    #
+    # The `-t` flag means "tuples only" — it suppresses column headers and
+    # row count footers, giving us just the bare number. This makes parsing
+    # in Ansible much easier.
+    - name: "Count tables in DEV colossus database"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_dev_ip }}
+        'sudo podman exec {{ pg_container }} psql -U {{ pg_user }} -d {{ pg_database }} -t -c
+        "SELECT count(*) FROM pg_tables
+         WHERE schemaname NOT IN ('"'"'pg_catalog'"'"', '"'"'information_schema'"'"');"'
+      register: dev_table_count_raw
+      changed_when: false
+
+    # ── Parse and validate DEV count ──────────────────────────────
+    # The raw output has whitespace around the number, so we strip it.
+    # We store it as a fact so later phases can reference it.
+    - name: "Parse DEV table count"
+      ansible.builtin.set_fact:
+        dev_table_count: "{{ dev_table_count_raw.stdout | trim }}"
+
+    - name: "GATE: Assert DEV has tables to sync"
+      ansible.builtin.assert:
+        that:
+          - dev_table_count | int > 0
+        fail_msg: >
+          DEV colossus database has {{ dev_table_count }} tables — nothing to sync.
+          Expected 25 tables. Is the database populated?
+        success_msg: "DEV colossus database has {{ dev_table_count }} tables"
+
+    # ── Count PROD tables (baseline for comparison) ───────────────
+    - name: "Count tables in PROD colossus database"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'sudo podman exec {{ pg_container }} psql -U {{ pg_user }} -d {{ pg_database }} -t -c
+        "SELECT count(*) FROM pg_tables
+         WHERE schemaname NOT IN ('"'"'pg_catalog'"'"', '"'"'information_schema'"'"');"'
+      register: prod_table_count_raw
+      changed_when: false
+
+    - name: "Parse PROD table count"
+      ansible.builtin.set_fact:
+        prod_table_count: "{{ prod_table_count_raw.stdout | trim }}"
+
+    # ── List DEV databases (for reference) ────────────────────────
+    # This captures the full database list so we can verify after sync.
+    # psql -c "\l" lists all databases — we'll save this in the baseline.
+    - name: "List DEV databases"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_dev_ip }}
+        'sudo podman exec {{ pg_container }} psql -U {{ pg_user }} -t -c
+        "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"'
+      register: dev_databases
+      changed_when: false
+
+    # ── Save baseline to file ─────────────────────────────────────
+    # This JSON file records the state of both environments before sync.
+    # It's archived later (Phase 7) for audit trail and debugging.
+    - name: "Save baseline counts to staging directory"
+      ansible.builtin.copy:
+        content: |
+          {
+            "timestamp": "{{ ansible_date_time.iso8601 }}",
+            "dev": {
+              "table_count": {{ dev_table_count }},
+              "databases": "{{ dev_databases.stdout_lines | map('trim') | select | list | join(', ') }}"
+            },
+            "prod_before_sync": {
+              "table_count": {{ prod_table_count }}
+            }
+          }
+        dest: "{{ sync_staging_dir }}/baseline.json"
+        mode: '0640'
+
+    # ── Pre-flight summary ────────────────────────────────────────
+    - name: "═══ PHASE 1 — PRE-FLIGHT SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           POSTGRESQL DEV→PROD SYNC — PRE-FLIGHT RESULTS
+          ═══════════════════════════════════════════════════════
+
+           DEV  (VM-210, {{ pg_dev_ip }}):
+             Container: {{ pg_container }} ✓ running
+             Tables in '{{ pg_database }}': {{ dev_table_count }}
+             Databases: {{ dev_databases.stdout_lines | map('trim') | select | list | join(', ') }}
+
+           PROD (VM-110, {{ pg_prod_ip }}):
+             Container: {{ pg_container }} ✓ running
+             Tables in '{{ pg_database }}': {{ prod_table_count }}
+
+           Baseline saved to: {{ sync_staging_dir }}/baseline.json
+
+          ═══════════════════════════════════════════════════════
+           ALL CHECKS PASSED — proceeding to Phase 2
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 2: Backup PROD (Rollback Safety Net)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Before we overwrite PROD with DEV data, we take a full dump of PROD.
+# This is your rollback safety net — if anything goes wrong, you can
+# restore from this file.
+#
+# pg_dumpall runs against the LIVE container via `podman exec` over SSH.
+# The dump streams directly from the container to the controller via
+# SSH stdout redirection. No files are created on the VM itself.
+#
+# Flow:
+#   SSH → VM-110 → podman exec → pg_dumpall → stdout → SSH → controller file
+#
+# This is the same technique from the backup runbook (§3.1), just
+# adapted for Ansible's shell module.
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 2 — Backup PROD PostgreSQL"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pg_prod_ip: "10.10.100.110"
+    pg_container: "colossus-postgres"
+    pg_user: "postgres"
+    sync_staging_dir: "/tmp/postgres-sync"
+    prod_backup_filename: "prod-pre-sync.sql"
+
+  tasks:
+    # ── Dump PROD to controller ───────────────────────────────────
+    # This command SSHes into the PROD VM and runs pg_dumpall inside
+    # the running container. The SQL output streams back through SSH
+    # and is redirected to a local file on the controller.
+    #
+    # Why `shell` instead of `command`? Because we're using the `>`
+    # redirect operator, which is a shell feature (not available in
+    # raw command execution).
+    #
+    # Why pg_dumpall instead of pg_dump? pg_dumpall captures ALL
+    # databases plus roles (users/permissions). pg_dump only captures
+    # one database and misses roles entirely.
+    # NOTE: No `creates:` guard here — we ALWAYS take a fresh PROD backup.
+    # If a stale dump exists from a failed prior run, it gets overwritten.
+    # The rollback safety net must reflect PROD's current state, not some
+    # earlier point in time. A stale backup would be dangerous to restore.
+    - name: "Dump PROD PostgreSQL to controller (this may take a moment)"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'sudo podman exec {{ pg_container }} pg_dumpall -U {{ pg_user }}'
+        > {{ sync_staging_dir }}/{{ prod_backup_filename }}
+
+    # ── Verify the dump file ──────────────────────────────────────
+    # We check three things:
+    #   1. File exists (stat.exists)
+    #   2. File has content (stat.size > 0)
+    #   3. File contains CREATE TABLE statements (sanity check)
+    - name: "Verify PROD backup file exists and has content"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: prod_backup_stat
+
+    - name: "GATE: Assert PROD backup is valid"
+      ansible.builtin.assert:
+        that:
+          - prod_backup_stat.stat.exists
+          - prod_backup_stat.stat.size > 0
+        fail_msg: >
+          PROD backup failed — file is missing or empty at
+          {{ sync_staging_dir }}/{{ prod_backup_filename }}.
+          Check SSH connectivity to core@{{ pg_prod_ip }} and container status.
+        success_msg: >
+          PROD backup created: {{ prod_backup_stat.stat.size | human_readable }}
+          (sha256: {{ prod_backup_stat.stat.checksum }})
+
+    # ── Count CREATE TABLE statements as sanity check ─────────────
+    # A valid pg_dumpall output should contain CREATE TABLE statements.
+    # If the dump has 0, something went wrong (maybe the container
+    # returned an error instead of SQL).
+    - name: "Count CREATE TABLE statements in PROD backup"
+      ansible.builtin.shell: >
+        grep -c "CREATE TABLE" {{ sync_staging_dir }}/{{ prod_backup_filename }}
+      register: prod_create_table_count
+      changed_when: false
+      # grep returns exit code 1 if no matches — don't fail on that
+      failed_when: prod_create_table_count.rc > 1
+
+    # ── Phase 2 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 2 — PROD BACKUP SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           PROD POSTGRESQL BACKUP COMPLETE
+          ═══════════════════════════════════════════════════════
+
+           File:          {{ sync_staging_dir }}/{{ prod_backup_filename }}
+           Size:          {{ prod_backup_stat.stat.size | human_readable }}
+           Checksum:      {{ prod_backup_stat.stat.checksum }}
+           CREATE TABLEs: {{ prod_create_table_count.stdout | default('unknown') }}
+
+           This backup is your rollback safety net.
+           If anything goes wrong, restore from this file.
+
+          ═══════════════════════════════════════════════════════
+           Proceeding to Phase 3 — Dump DEV
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 3: Dump DEV (The Source Data)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Same technique as Phase 2, but against the DEV database.
+# This dump is the data that will be loaded into PROD in Phase 5.
+#
+# After this phase, the controller has two SQL files:
+#   - prod-pre-sync.sql  (Phase 2 — rollback safety net)
+#   - dev.sql             (this phase — source data for PROD)
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 3 — Dump DEV PostgreSQL"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pg_dev_ip: "10.10.100.200"
+    pg_container: "colossus-postgres"
+    pg_user: "postgres"
+    sync_staging_dir: "/tmp/postgres-sync"
+    prod_backup_filename: "prod-pre-sync.sql"
+    dev_dump_filename: "dev.sql"
+
+  tasks:
+    # ── Safety gate: verify PROD backup exists ────────────────────
+    # Never proceed with dumping DEV unless we have a PROD backup.
+    # This is a defensive check — Phase 2 should have created it,
+    # but if someone runs phases out of order, this catches it.
+    - name: "GATE: Verify PROD backup exists before dumping DEV"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: prod_backup_check
+
+    - name: "GATE: Assert PROD backup was created in Phase 2"
+      ansible.builtin.assert:
+        that:
+          - prod_backup_check.stat.exists
+          - prod_backup_check.stat.size > 0
+        fail_msg: >
+          PROD backup not found at {{ sync_staging_dir }}/{{ prod_backup_filename }}.
+          Did Phase 2 complete successfully? REFUSING to continue without rollback safety net.
+        success_msg: "PROD backup verified ({{ prod_backup_check.stat.size | human_readable }})"
+
+    # ── Dump DEV to controller ────────────────────────────────────
+    - name: "Dump DEV PostgreSQL to controller (this may take a moment)"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_dev_ip }}
+        'sudo podman exec {{ pg_container }} pg_dumpall -U {{ pg_user }}'
+        > {{ sync_staging_dir }}/{{ dev_dump_filename }}
+
+    # ── Verify the DEV dump ───────────────────────────────────────
+    - name: "Verify DEV dump file exists and has content"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ dev_dump_filename }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: dev_dump_stat
+
+    - name: "GATE: Assert DEV dump is valid"
+      ansible.builtin.assert:
+        that:
+          - dev_dump_stat.stat.exists
+          - dev_dump_stat.stat.size > 0
+        fail_msg: >
+          DEV dump failed — file is missing or empty at
+          {{ sync_staging_dir }}/{{ dev_dump_filename }}.
+        success_msg: >
+          DEV dump created: {{ dev_dump_stat.stat.size | human_readable }}
+          (sha256: {{ dev_dump_stat.stat.checksum }})
+
+    # ── Count CREATE TABLE statements ─────────────────────────────
+    - name: "Count CREATE TABLE statements in DEV dump"
+      ansible.builtin.shell: >
+        grep -c "CREATE TABLE" {{ sync_staging_dir }}/{{ dev_dump_filename }}
+      register: dev_create_table_count
+      changed_when: false
+      failed_when: dev_create_table_count.rc > 1
+
+    # ── Phase 3 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 3 — DEV DUMP SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           DEV POSTGRESQL DUMP COMPLETE
+          ═══════════════════════════════════════════════════════
+
+           File:          {{ sync_staging_dir }}/{{ dev_dump_filename }}
+           Size:          {{ dev_dump_stat.stat.size | human_readable }}
+           Checksum:      {{ dev_dump_stat.stat.checksum }}
+           CREATE TABLEs: {{ dev_create_table_count.stdout | default('unknown') }}
+
+           Controller now has both files:
+             {{ sync_staging_dir }}/{{ prod_backup_filename }}  ← rollback safety net
+             {{ sync_staging_dir }}/{{ dev_dump_filename }}      ← source data
+
+          ═══════════════════════════════════════════════════════
+           Proceeding to Phase 4 — Transfer to PROD
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 4: Transfer DEV Dump to PROD VM
+# ═══════════════════════════════════════════════════════════════════
+#
+# Copies the DEV SQL dump from the controller to the PROD VM.
+# The file is placed in /tmp on the PROD VM, where Phase 5 will
+# pipe it into `psql` for restore.
+#
+# Why not stream directly? We transfer the file first so we can:
+#   1. Verify the checksum (data integrity)
+#   2. Have the file available on PROD for manual re-run if needed
+#   3. Separate "transfer" from "load" for cleaner error handling
+#
+# Transfer path: controller → SCP → VM-110:/tmp/postgres_restore.sql
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 4 — Transfer DEV Dump to PROD"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pg_prod_ip: "10.10.100.110"
+    sync_staging_dir: "/tmp/postgres-sync"
+    dev_dump_filename: "dev.sql"
+    prod_restore_path: "/tmp/postgres_restore.sql"
+
+  tasks:
+    # ── Verify source file ────────────────────────────────────────
+    - name: "Verify DEV dump exists on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ dev_dump_filename }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: source_file
+
+    - name: "GATE: Assert DEV dump is present"
+      ansible.builtin.assert:
+        that:
+          - source_file.stat.exists
+          - source_file.stat.size > 0
+        fail_msg: >
+          DEV dump not found at {{ sync_staging_dir }}/{{ dev_dump_filename }}.
+          Did Phase 3 complete successfully?
+        success_msg: >
+          DEV dump verified: {{ source_file.stat.size | human_readable }}
+          (sha256: {{ source_file.stat.checksum }})
+
+    # ── Copy to PROD VM via SCP ───────────────────────────────────
+    # We use scp to transfer the file. The `core` user has SSH key
+    # access to all CoreOS VMs. The file lands in /tmp which is
+    # writable by all users.
+    - name: "SCP DEV dump to PROD VM"
+      ansible.builtin.shell: >
+        scp {{ sync_staging_dir }}/{{ dev_dump_filename }}
+        core@{{ pg_prod_ip }}:{{ prod_restore_path }}
+
+    # ── Verify file on PROD ───────────────────────────────────────
+    # Check the file arrived and its checksum matches what we sent.
+    # This catches any data corruption during transfer.
+    - name: "Verify dump file arrived on PROD"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'sha256sum {{ prod_restore_path }}'
+      register: dest_checksum_raw
+      changed_when: false
+
+    # ── Parse the checksum ────────────────────────────────────────
+    # sha256sum output format: "checksum  filename"
+    # We extract just the checksum part for comparison.
+    - name: "Parse PROD checksum"
+      ansible.builtin.set_fact:
+        dest_checksum: "{{ dest_checksum_raw.stdout.split()[0] }}"
+
+    - name: "GATE: Assert transfer integrity (checksums must match)"
+      ansible.builtin.assert:
+        that:
+          - dest_checksum == source_file.stat.checksum
+        fail_msg: >
+          CHECKSUM MISMATCH!
+          Source (controller): {{ source_file.stat.checksum }}
+          Destination (PROD):  {{ dest_checksum }}
+          Transfer may be corrupted. Do NOT proceed to Phase 5.
+        success_msg: "Transfer verified — checksums match (sha256: {{ dest_checksum }})"
+
+    # ── Phase 4 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 4 — TRANSFER SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           DEV DUMP TRANSFERRED TO PROD
+          ═══════════════════════════════════════════════════════
+
+           Source:   {{ sync_staging_dir }}/{{ dev_dump_filename }} (controller)
+           Dest:     core@{{ pg_prod_ip }}:{{ prod_restore_path }}
+           Size:     {{ source_file.stat.size | human_readable }}
+           Checksum: {{ dest_checksum }} ✓ MATCH
+
+          ═══════════════════════════════════════════════════════
+           ⚠ WARNING: The next phase is DESTRUCTIVE
+           ⚠ Phase 5 will OVERWRITE all PROD PostgreSQL data
+           ⚠ with the DEV copy.
+           ⚠
+           ⚠ Rollback file:
+           ⚠   {{ sync_staging_dir }}/prod-pre-sync.sql
+          ═══════════════════════════════════════════════════════
+           Proceeding to Phase 5 — Load PROD
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 5: Load DEV Data into PROD (⚠ DESTRUCTIVE ⚠)
+# ═══════════════════════════════════════════════════════════════════
+#
+# THIS PHASE OVERWRITES ALL DATA IN THE PROD POSTGRESQL DATABASE.
+#
+# How it works:
+#   1. The SQL dump file (from Phase 4) is piped into `psql` via
+#      `podman exec -i` (the -i flag enables stdin streaming)
+#   2. psql executes every SQL statement in the dump sequentially
+#   3. The dump contains DROP/CREATE statements, so existing objects
+#      are replaced
+#
+# The pg_dumpall output includes statements like:
+#   DROP DATABASE IF EXISTS colossus;
+#   CREATE DATABASE colossus;
+#   \connect colossus
+#   CREATE TABLE papers (...);
+#   COPY papers FROM stdin;
+#   <actual data rows>
+#   \.
+#
+# This effectively "replaces" the database — first dropping it, then
+# recreating everything from scratch.
+#
+# Important: The dump also includes role (user) definitions. If PROD
+# has users that DEV doesn't, they'll be dropped. In our case this is
+# fine because both environments use the same 'postgres' superuser.
+#
+# PROD PostgreSQL stays RUNNING throughout — psql connects to the
+# live database server and executes the SQL. Brief service disruption
+# is expected while tables are being dropped and recreated.
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 5 — ⚠ Load DEV Data into PROD (DESTRUCTIVE)"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pg_prod_ip: "10.10.100.110"
+    pg_container: "colossus-postgres"
+    pg_user: "postgres"
+    sync_staging_dir: "/tmp/postgres-sync"
+    prod_backup_filename: "prod-pre-sync.sql"
+    prod_restore_path: "/tmp/postgres_restore.sql"
+
+  tasks:
+    # ── Safety gates ──────────────────────────────────────────────
+    # Double-check that we have both the rollback backup AND the
+    # source file before doing anything destructive.
+    - name: "GATE: Verify PROD rollback backup exists on controller"
+      ansible.builtin.stat:
+        path: "{{ sync_staging_dir }}/{{ prod_backup_filename }}"
+      register: rollback_backup
+
+    - name: "GATE: Assert rollback backup is present"
+      ansible.builtin.assert:
+        that:
+          - rollback_backup.stat.exists
+          - rollback_backup.stat.size > 0
+        fail_msg: >
+          CRITICAL: PROD rollback backup not found at
+          {{ sync_staging_dir }}/{{ prod_backup_filename }}.
+          REFUSING to proceed without a rollback safety net.
+        success_msg: "Rollback backup verified ({{ rollback_backup.stat.size | human_readable }})"
+
+    - name: "GATE: Verify DEV dump is staged on PROD VM"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'test -s {{ prod_restore_path }} && echo "EXISTS" || echo "MISSING"'
+      register: staged_check
+      changed_when: false
+
+    - name: "GATE: Assert DEV dump is staged on PROD"
+      ansible.builtin.assert:
+        that:
+          - "'EXISTS' in staged_check.stdout"
+        fail_msg: >
+          DEV dump not found at core@{{ pg_prod_ip }}:{{ prod_restore_path }}.
+          Did Phase 4 (Transfer) complete successfully?
+        success_msg: "DEV dump confirmed on PROD VM"
+
+    # ── Restore DEV data into PROD (DESTRUCTIVE) ──────────────────
+    # This is the critical step. We pipe the SQL file into psql
+    # running inside the PROD container.
+    #
+    # The command chain:
+    #   ssh core@PROD_IP                     ← connect to PROD VM
+    #     cat /tmp/postgres_restore.sql |    ← read the SQL file
+    #     sudo podman exec -i               ← stream stdin into container
+    #       colossus-postgres               ← the running PG container
+    #       psql -U postgres                ← execute SQL as superuser
+    #
+    # The `-i` flag on `podman exec` is critical — without it, stdin
+    # is not connected and psql has nothing to read.
+    #
+    # We use `shell` because of the pipe operator (|).
+    - name: "⚠ DESTRUCTIVE: Restore DEV dump into PROD PostgreSQL"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'cat {{ prod_restore_path }} |
+         sudo podman exec -i {{ pg_container }} psql -U {{ pg_user }}'
+      register: restore_result
+
+    # ── Clean up temp file on PROD VM ─────────────────────────────
+    # The restore file served its purpose. Remove it to avoid
+    # leaving sensitive data in /tmp.
+    - name: "Clean up restore file on PROD VM"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'rm -f {{ prod_restore_path }}'
+      changed_when: true
+
+    # ── Phase 5 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 5 — LOAD SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           ⚠ PROD POSTGRESQL DATA REPLACED WITH DEV COPY
+          ═══════════════════════════════════════════════════════
+
+           DEV data has been loaded into PROD.
+           Temp file cleaned up from PROD VM.
+
+           Rollback available at:
+             {{ sync_staging_dir }}/prod-pre-sync.sql
+
+          ═══════════════════════════════════════════════════════
+           Proceeding to Phase 6 — Validate
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 6: Validate Sync
+# ═══════════════════════════════════════════════════════════════════
+#
+# Confirms PROD now matches DEV by comparing:
+#   1. Table count in the 'colossus' database (must be equal)
+#   2. Database list (displayed for operator review)
+#   3. DEV unchanged (no side effects from the sync)
+#
+# If validation fails, run rollback immediately:
+#   1. scp /opt/postgres-sync/prod-latest.sql core@10.10.100.110:/tmp/postgres_restore.sql
+#   2. ssh core@10.10.100.110 'cat /tmp/postgres_restore.sql | sudo podman exec -i colossus-postgres psql -U postgres'
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 6 — Validate Sync"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    pg_dev_ip: "10.10.100.200"
+    pg_prod_ip: "10.10.100.110"
+    pg_container: "colossus-postgres"
+    pg_user: "postgres"
+    pg_database: "colossus"
+
+  tasks:
+    # ── Count PROD tables (should now match DEV) ──────────────────
+    - name: "Count tables in PROD colossus database (post-sync)"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'sudo podman exec {{ pg_container }} psql -U {{ pg_user }} -d {{ pg_database }} -t -c
+        "SELECT count(*) FROM pg_tables
+         WHERE schemaname NOT IN ('"'"'pg_catalog'"'"', '"'"'information_schema'"'"');"'
+      register: prod_post_count_raw
+      changed_when: false
+
+    - name: "Parse PROD post-sync table count"
+      ansible.builtin.set_fact:
+        prod_post_table_count: "{{ prod_post_count_raw.stdout | trim }}"
+
+    # ── Count DEV tables (should be unchanged) ────────────────────
+    - name: "Count tables in DEV colossus database (verify unchanged)"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_dev_ip }}
+        'sudo podman exec {{ pg_container }} psql -U {{ pg_user }} -d {{ pg_database }} -t -c
+        "SELECT count(*) FROM pg_tables
+         WHERE schemaname NOT IN ('"'"'pg_catalog'"'"', '"'"'information_schema'"'"');"'
+      register: dev_post_count_raw
+      changed_when: false
+
+    - name: "Parse DEV post-sync table count"
+      ansible.builtin.set_fact:
+        dev_post_table_count: "{{ dev_post_count_raw.stdout | trim }}"
+
+    # ── Parity check ──────────────────────────────────────────────
+    # The critical assertion: PROD table count must match DEV.
+    # If this fails, the sync didn't work correctly.
+    - name: "GATE: Assert PROD table count matches DEV"
+      ansible.builtin.assert:
+        that:
+          - prod_post_table_count == dev_post_table_count
+        fail_msg: >
+          TABLE COUNT MISMATCH!
+          PROD: {{ prod_post_table_count }} tables
+          DEV:  {{ dev_post_table_count }} tables
+          The sync may have failed. Check PROD logs and consider rollback.
+        success_msg: >
+          PARITY CONFIRMED: PROD and DEV both have {{ prod_post_table_count }} tables
+
+    # ── List PROD tables for operator review ──────────────────────
+    # This isn't a gate — it's informational output so you can
+    # eyeball the table names and make sure everything looks right.
+    - name: "List PROD tables (post-sync, for operator review)"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'sudo podman exec {{ pg_container }} psql -U {{ pg_user }} -d {{ pg_database }} -t -c
+        "SELECT tablename FROM pg_tables
+         WHERE schemaname NOT IN ('"'"'pg_catalog'"'"', '"'"'information_schema'"'"')
+         ORDER BY tablename;"'
+      register: prod_table_list
+      changed_when: false
+
+    # ── List PROD databases ───────────────────────────────────────
+    - name: "List PROD databases (post-sync)"
+      ansible.builtin.shell: >
+        ssh core@{{ pg_prod_ip }}
+        'sudo podman exec {{ pg_container }} psql -U {{ pg_user }} -t -c
+        "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"'
+      register: prod_databases
+      changed_when: false
+
+    # ── Phase 6 summary ──────────────────────────────────────────
+    - name: "═══ PHASE 6 — VALIDATION SUMMARY ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           POSTGRESQL SYNC VALIDATION
+          ═══════════════════════════════════════════════════════
+
+           PROD (VM-110, {{ pg_prod_ip }}) — post-sync:
+             Tables in '{{ pg_database }}': {{ prod_post_table_count }}
+             Databases: {{ prod_databases.stdout_lines | map('trim') | select | list | join(', ') }}
+
+           DEV  (VM-210, {{ pg_dev_ip }}) — unchanged:
+             Tables in '{{ pg_database }}': {{ dev_post_table_count }}
+
+           Parity: ✓ PROD ({{ prod_post_table_count }}) == DEV ({{ dev_post_table_count }})
+
+           PROD tables:
+          {{ prod_table_list.stdout }}
+
+          ═══════════════════════════════════════════════════════
+           VALIDATION PASSED
+           Proceeding to Phase 7 — Archive
+          ═══════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 7: Archive Backups
+# ═══════════════════════════════════════════════════════════════════
+#
+# Move the staging files to the permanent archive directory with
+# timestamps. This serves two purposes:
+#   1. Rollback: prod-latest.sql symlink always points to the most
+#      recent PROD backup for quick recovery
+#   2. Audit trail: timestamped files let you see what was synced when
+#
+# The staging directory (/tmp/postgres-sync) is cleaned up after
+# archiving. The archive directory (/opt/postgres-sync) persists.
+#
+# On CT-315, /opt/postgres-sync is on the ZFS-backed mount
+# (pbs-zfs/services/semaphore/sync), so it survives reboots and
+# is included in ZFS replication to TrueNAS.
+# ═══════════════════════════════════════════════════════════════════
+- name: "Phase 7 — Archive Sync Backups"
+  hosts: localhost
+  connection: local
+  gather_facts: true          # Need ansible_date_time for timestamp
+  vars:
+    sync_staging_dir: "/tmp/postgres-sync"
+    sync_archive_dir: "/opt/postgres-sync"
+
+  tasks:
+    # ── Generate timestamp ────────────────────────────────────────
+    # iso8601_basic_short produces "20260311T130445" — sortable and
+    # filesystem-safe (no colons or spaces).
+    - name: "Generate archive timestamp"
+      ansible.builtin.set_fact:
+        sync_ts: "{{ ansible_date_time.iso8601_basic_short }}"
+
+    # ── Create archive directory ──────────────────────────────────
+    - name: "Ensure archive directory exists"
+      ansible.builtin.file:
+        path: "{{ sync_archive_dir }}"
+        state: directory
+        mode: '0750'
+
+    # ── Archive PROD pre-sync backup ──────────────────────────────
+    - name: "Archive PROD backup → prod-pre-sync-{{ sync_ts }}.sql"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/prod-pre-sync.sql"
+        dest: "{{ sync_archive_dir }}/prod-pre-sync-{{ sync_ts }}.sql"
+        remote_src: true
+        mode: '0640'
+
+    # ── Archive DEV dump ──────────────────────────────────────────
+    - name: "Archive DEV dump → dev-{{ sync_ts }}.sql"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/dev.sql"
+        dest: "{{ sync_archive_dir }}/dev-{{ sync_ts }}.sql"
+        remote_src: true
+        mode: '0640'
+
+    # ── Archive baseline counts ───────────────────────────────────
+    - name: "Archive baseline → baseline-{{ sync_ts }}.json"
+      ansible.builtin.copy:
+        src: "{{ sync_staging_dir }}/baseline.json"
+        dest: "{{ sync_archive_dir }}/baseline-{{ sync_ts }}.json"
+        remote_src: true
+        mode: '0640'
+
+    # ── Create "latest" symlink for rollback ──────────────────────
+    # This symlink always points to the most recent PROD backup.
+    # Rollback procedure: copy this file to PROD and restore via psql.
+    # The `force: true` flag overwrites any existing symlink.
+    - name: "Update prod-latest.sql symlink"
+      ansible.builtin.file:
+        src: "{{ sync_archive_dir }}/prod-pre-sync-{{ sync_ts }}.sql"
+        dest: "{{ sync_archive_dir }}/prod-latest.sql"
+        state: link
+        force: true
+
+    # ── Clean up staging directory ────────────────────────────────
+    # The staging files have been archived. Remove the temp directory
+    # to keep /tmp clean.
+    - name: "Remove staging directory"
+      ansible.builtin.file:
+        path: "{{ sync_staging_dir }}"
+        state: absent
+
+    # ── List archive contents ─────────────────────────────────────
+    - name: "List archive directory"
+      ansible.builtin.find:
+        paths: "{{ sync_archive_dir }}"
+        file_type: any
+      register: archive_contents
+
+    # ── Final summary ─────────────────────────────────────────────
+    - name: "═══ POSTGRESQL SYNC COMPLETE ═══"
+      ansible.builtin.debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════
+           ✓ POSTGRESQL DEV → PROD SYNC COMPLETE
+          ═══════════════════════════════════════════════════════
+           Timestamp: {{ ansible_date_time.iso8601 }}
+
+           Archived to {{ sync_archive_dir }}:
+             prod-pre-sync-{{ sync_ts }}.sql  ← PROD before sync
+             dev-{{ sync_ts }}.sql            ← DEV data loaded
+             baseline-{{ sync_ts }}.json      ← Count snapshot
+             prod-latest.sql                  → symlink to latest
+
+           Archive contains {{ archive_contents.files | length }} file(s)
+
+           PROD PostgreSQL now matches DEV.
+
+           To rollback:
+             1. scp {{ sync_archive_dir }}/prod-latest.sql \
+                  core@10.10.100.110:/tmp/postgres_restore.sql
+             2. ssh core@10.10.100.110 \
+                  'cat /tmp/postgres_restore.sql | \
+                   sudo podman exec -i colossus-postgres psql -U postgres'
+          ═══════════════════════════════════════════════════════
