@@ -43,7 +43,22 @@ http:
         - http
       service: {{ route.service | default(route.name) }}
       priority: 10
+{% if traefik_auth is defined and traefik_auth.enabled | default(false) and route.protected | default(false) %}
+      middlewares:
+        - {{ traefik_auth.name }}
+{% endif %}
 
+{% endfor %}
+{% for route in traefik_routes if route.external | default(false) and route.protected | default(false) %}
+{% if traefik_auth is defined and traefik_auth.enabled | default(false) %}
+    {{ route.name }}-http-auth:
+      rule: "Host(`{{ route.host }}`) && PathPrefix(`/outpost.goauthentik.io/`)"
+      entryPoints:
+        - http
+      service: authentik-server
+      priority: 15
+
+{% endif %}
 {% endfor %}
 {% if traefik_auth_portal is defined %}
     # --- Authentik portal HTTP (for Cloudflare Tunnel) ---

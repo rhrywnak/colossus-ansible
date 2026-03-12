@@ -66,13 +66,13 @@ traefik_routes:
   - name: colossus-legal-dev
     host: "colossus-legal-dev.{{ domain }}"
     backend_url: "http://10.10.100.220:5473"
-    external: false
+    external: true
     protected: true
 
   - name: colossus-legal-api-dev
     host: "colossus-legal-api-dev.{{ domain }}"
     backend_url: "http://10.10.100.220:3403"
-    external: false
+    external: true
     protected: true
 
   # -- Infrastructure --
