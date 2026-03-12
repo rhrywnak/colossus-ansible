@@ -7,7 +7,7 @@
 #
 # ZFS datasets (created if not present — idempotent):
 #   pbs-zfs/services/semaphore/data → /mnt/data (SQLite DB, config, tmp)
-#   pbs-zfs/services/semaphore/sync → /opt/neo4j-sync (sync archive)
+#   pbs-zfs/services/semaphore/sync → /opt/db-sync (DB sync archives: neo4j/, postgres/, qdrant/)
 #
 # Does NOT install anything inside — that's for later steps.
 #
@@ -90,6 +90,24 @@ EOF
 echo "  Starting CT-${CTID}..."
 ssh ${PVE_HOST} "pct start ${CTID}"
 sleep 5
+
+# --- Fix ZFS mount ownership (must be AFTER container start) ---
+# Proxmox resets bind mount directory ownership during pct start.
+# The semaphore user inside the unprivileged container maps to
+# UID ${CT_UID}:${CT_GID} on the host. Both mount points and
+# their subdirectories must be writable by this user.
+echo "  Fixing ZFS mount ownership post-start..."
+ssh ${PVE_HOST} "bash -s" << EOF
+    chown ${CT_UID}:${CT_GID} ${ZFS_DATA_MOUNTPOINT}
+    chown -R ${CT_UID}:${CT_GID} ${ZFS_DATA_MOUNTPOINT}/tmp
+    chown ${CT_UID}:${CT_GID} ${ZFS_SYNC_MOUNTPOINT}
+    # Sync subdirectories (created once, ownership must survive rebuilds)
+    for subdir in neo4j postgres qdrant; do
+        if [ -d "${ZFS_SYNC_MOUNTPOINT}/\${subdir}" ]; then
+            chown ${CT_UID}:${CT_GID} ${ZFS_SYNC_MOUNTPOINT}/\${subdir}
+        fi
+    done
+EOF
 
 # --- Verify ---
 STATUS=$(ssh ${PVE_HOST} "pct status ${CTID}" | awk '{print $2}')

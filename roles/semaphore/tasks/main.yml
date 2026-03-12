@@ -10,7 +10,7 @@
 #   - Internet access available (GitHub downloads, pip, Galaxy)
 #   - ZFS bind mounts already configured by 01-create.sh:
 #       /mnt/data       → pbs-zfs/services/semaphore/data (SQLite, config, tmp)
-#       /opt/neo4j-sync → pbs-zfs/services/semaphore/sync (sync archive)
+#       /opt/db-sync → pbs-zfs/services/semaphore/sync (DB sync archives: neo4j/, postgres/, qdrant/)
 #
 # Idempotent: safe to re-run. Config is only written on first deploy.
 
@@ -46,7 +46,7 @@
     create_home: true
 
 # --- Directories ---
-# NOTE: semaphore_data_dir (/mnt/data) and semaphore_sync_dir (/opt/neo4j-sync)
+# NOTE: semaphore_data_dir (/mnt/data) and semaphore_sync_dir (/opt/db-sync)
 # are ZFS bind mounts created by scripts/semaphore/01-create.sh with correct
 # ownership set from the pve-3 host. Do NOT try to chown them here — it will
 # fail in unprivileged containers.

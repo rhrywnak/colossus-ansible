@@ -8,7 +8,7 @@
 # PROD backup from the archive directory.
 #
 # Backup search order:
-#   1. /opt/neo4j-sync/prod-latest.dump (symlink from full sync)
+#   1. /opt/db-sync/neo4j/prod-latest.dump (symlink from full sync)
 #   2. /tmp/neo4j-sync/prod-pre-sync.dump (from individual phase runs)
 #
 # Run this if:
@@ -23,7 +23,7 @@
   vars_files:
     - vars.yml
   vars:
-    sync_archive_dir: /opt/neo4j-sync
+    sync_archive_dir: /opt/db-sync/neo4j
 
   tasks:
     # ── Locate the backup file ────────────────────────────────────

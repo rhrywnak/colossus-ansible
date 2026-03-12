@@ -18,9 +18,9 @@ semaphore_venv_dir: "{{ semaphore_home }}/venv"
 # These are mount points from pve-3 ZFS datasets, NOT local container storage.
 # Golden rule: no persistent data inside container rootfs.
 #   /mnt/data       → pbs-zfs/services/semaphore/data (SQLite DB, config backup, tmp)
-#   /opt/neo4j-sync → pbs-zfs/services/semaphore/sync (Neo4j sync archive)
+#   /opt/db-sync → pbs-zfs/services/semaphore/sync (DB sync archives: neo4j/, postgres/, qdrant/)
 semaphore_data_dir: /mnt/data
-semaphore_sync_dir: /opt/neo4j-sync
+semaphore_sync_dir: /opt/db-sync
 
 # Database (SQLite on externalized storage)
 semaphore_db_dialect: "sqlite"

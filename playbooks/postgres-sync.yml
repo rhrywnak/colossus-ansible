@@ -62,7 +62,7 @@
 # dropped and recreated.
 #
 # Backup naming convention:
-#   /opt/postgres-sync/
+#   /opt/db-sync/postgres/
 #     prod-pre-sync-20260311T130445.sql   ← PROD before sync
 #     dev-20260311T130445.sql             ← DEV data that was loaded
 #     baseline-20260311T130445.json       ← Table count snapshot
@@ -72,7 +72,7 @@
 #   (Same process as Phase 4+5, but using the PROD backup instead of DEV dump)
 #
 # Prerequisites:
-#   sudo mkdir -p /opt/postgres-sync && sudo chown $(whoami) /opt/postgres-sync
+#   sudo mkdir -p /opt/db-sync/postgres && sudo chown $(whoami) /opt/db-sync/postgres
 #   (only needed once per controller — workstation or CT-315)
 #
 # Reference:
@@ -135,8 +135,8 @@
 
     # ── Archive Directory ─────────────────────────────────────────
     # Final resting place for timestamped backups.
-    # On CT-315, this should be on the ZFS-backed mount (/opt/postgres-sync).
-    sync_archive_dir: "/opt/postgres-sync"
+    # On CT-315, this should be on the ZFS-backed mount (/opt/db-sync/postgres).
+    sync_archive_dir: "/opt/db-sync/postgres"
 
   tasks:
     # ── Create staging directory ──────────────────────────────────
@@ -751,7 +751,7 @@
 #   3. DEV unchanged (no side effects from the sync)
 #
 # If validation fails, run rollback immediately:
-#   1. scp /opt/postgres-sync/prod-latest.sql core@10.10.100.110:/tmp/postgres_restore.sql
+#   1. scp /opt/db-sync/postgres/prod-latest.sql core@10.10.100.110:/tmp/postgres_restore.sql
 #   2. ssh core@10.10.100.110 'cat /tmp/postgres_restore.sql | sudo podman exec -i colossus-postgres psql -U postgres'
 # ═══════════════════════════════════════════════════════════════════
 - name: "Phase 6 — Validate Sync"
@@ -869,9 +869,9 @@
 #   2. Audit trail: timestamped files let you see what was synced when
 #
 # The staging directory (/tmp/postgres-sync) is cleaned up after
-# archiving. The archive directory (/opt/postgres-sync) persists.
+# archiving. The archive directory (/opt/db-sync/postgres) persists.
 #
-# On CT-315, /opt/postgres-sync is on the ZFS-backed mount
+# On CT-315, /opt/db-sync/postgres is on the ZFS-backed mount
 # (pbs-zfs/services/semaphore/sync), so it survives reboots and
 # is included in ZFS replication to TrueNAS.
 # ═══════════════════════════════════════════════════════════════════
@@ -881,7 +881,7 @@
   gather_facts: true          # Need ansible_date_time for timestamp
   vars:
     sync_staging_dir: "/tmp/postgres-sync"
-    sync_archive_dir: "/opt/postgres-sync"
+    sync_archive_dir: "/opt/db-sync/postgres"
 
   tasks:
     # ── Generate timestamp ────────────────────────────────────────

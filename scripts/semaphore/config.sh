@@ -29,7 +29,7 @@ ZFS_SYNC_MOUNTPOINT="/pbs-zfs/services/semaphore/sync"
 
 # Bind mount paths inside the container
 CT_DATA_MOUNT="/mnt/data"           # → ZFS_DATA
-CT_SYNC_MOUNT="/opt/neo4j-sync"     # → ZFS_SYNC
+CT_SYNC_MOUNT="/opt/db-sync"        # → ZFS_SYNC (neo4j/, postgres/, qdrant/ subdirs)
 
 # UID/GID mapping for unprivileged container
 # semaphore user inside CT maps to these UIDs on the host

@@ -57,18 +57,18 @@
 #   Phase 6: Archive       → Timestamp snapshots, symlink for rollback
 #
 # Backup naming convention:
-#   /opt/qdrant-sync/
+#   /opt/db-sync/qdrant/
 #     prod-pre-sync-20260311T130445.snapshot   ← PROD before sync
 #     dev-20260311T130445.snapshot             ← DEV data uploaded
 #     baseline-20260311T130445.json            ← Point count snapshot
 #     prod-latest.snapshot                     ← Symlink to latest
 #
 # To rollback (only if PROD had data before sync):
-#   curl -X POST -F "snapshot=@/opt/qdrant-sync/prod-latest.snapshot" \
+#   curl -X POST -F "snapshot=@/opt/db-sync/qdrant/prod-latest.snapshot" \
 #     "http://10.10.100.110:6333/collections/paper_chunks/snapshots/upload?priority=snapshot"
 #
 # Prerequisites:
-#   sudo mkdir -p /opt/qdrant-sync && sudo chown $(whoami) /opt/qdrant-sync
+#   sudo mkdir -p /opt/db-sync/qdrant && sudo chown $(whoami) /opt/db-sync/qdrant
 #   (only needed once per controller — workstation or CT-315)
 #
 # Reference:
@@ -110,7 +110,7 @@
 
     # ── Controller Directories ────────────────────────────────────
     sync_staging_dir: "/tmp/qdrant-sync"
-    sync_archive_dir: "/opt/qdrant-sync"
+    sync_archive_dir: "/opt/db-sync/qdrant"
 
   tasks:
     # ── Create staging directory ──────────────────────────────────
@@ -715,7 +715,7 @@
   gather_facts: true
   vars:
     sync_staging_dir: "/tmp/qdrant-sync"
-    sync_archive_dir: "/opt/qdrant-sync"
+    sync_archive_dir: "/opt/db-sync/qdrant"
     prod_backup_filename: "prod-pre-sync.snapshot"
     dev_snapshot_filename: "dev.snapshot"
 

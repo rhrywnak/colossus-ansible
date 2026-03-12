@@ -18,7 +18,7 @@
 #   archive        → Timestamp and archive all dumps for future rollback
 #
 # Backup naming convention:
-#   /opt/neo4j-sync/
+#   /opt/db-sync/neo4j/
 #     prod-pre-sync-20260220T130445.dump   ← PROD before sync
 #     dev-20260220T130445.dump             ← DEV data that was loaded
 #     baseline-20260220T130445.json        ← Node/rel counts snapshot
@@ -28,7 +28,7 @@
 #   It uses prod-latest.dump from the archive automatically.
 #
 # Prerequisites:
-#   sudo mkdir -p /opt/neo4j-sync && sudo chown $(whoami) /opt/neo4j-sync
+#   sudo mkdir -p /opt/db-sync/neo4j && sudo chown $(whoami) /opt/db-sync/neo4j
 #   (only needed once per controller — workstation or CT-315)
 
 # ═══════════════════════════════════════════════════════════════════
@@ -70,7 +70,7 @@
   gather_facts: true
   vars:
     sync_staging_dir: /tmp/neo4j-sync
-    sync_archive_dir: /opt/neo4j-sync
+    sync_archive_dir: /opt/db-sync/neo4j
 
   tasks:
     # ── Generate timestamp ────────────────────────────────────────
