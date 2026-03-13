@@ -58,6 +58,24 @@ http:
       service: authentik-server
       priority: 15
 
+    # CORS preflight bypass for {{ route.name }} (HTTP/tunnel)
+    # OPTIONS requests carry no cookies — let the backend handle CORS directly
+    {{ route.name }}-http-cors-preflight:
+      rule: "Host(`{{ route.host }}`) && Method(`OPTIONS`)"
+      entryPoints:
+        - http
+      service: {{ route.service | default(route.name) }}
+      priority: 20
+
+    # Logout bypass for {{ route.name }} (HTTP/tunnel)
+    # Allows /api/logout to clear cookies without ForwardAuth intercepting
+    {{ route.name }}-http-logout:
+      rule: "Host(`{{ route.host }}`) && Path(`/api/logout`)"
+      entryPoints:
+        - http
+      service: {{ route.service | default(route.name) }}
+      priority: 20
+
 {% endif %}
 {% endfor %}
 {% if traefik_auth_portal is defined %}
