@@ -106,7 +106,7 @@
     # ── Collection Name ───────────────────────────────────────────
     # paper_chunks is the collection used by colossus-legal.
     # It stores vector embeddings of legal document chunks.
-    collection: "paper_chunks"
+    collection: "colossus_evidence"
 
     # ── Controller Directories ────────────────────────────────────
     sync_staging_dir: "/tmp/qdrant-sync"
@@ -306,7 +306,7 @@
   gather_facts: false
   vars:
     qdrant_prod_url: "http://10.10.100.110:6333"
-    collection: "paper_chunks"
+    collection: "colossus_evidence"
     sync_staging_dir: "/tmp/qdrant-sync"
     prod_backup_filename: "prod-pre-sync.snapshot"
 
@@ -434,7 +434,7 @@
   gather_facts: false
   vars:
     qdrant_dev_url: "http://10.10.100.200:6333"
-    collection: "paper_chunks"
+    collection: "colossus_evidence"
     sync_staging_dir: "/tmp/qdrant-sync"
     dev_snapshot_filename: "dev.snapshot"
 
@@ -630,7 +630,7 @@
   vars:
     qdrant_dev_url: "http://10.10.100.200:6333"
     qdrant_prod_url: "http://10.10.100.110:6333"
-    collection: "paper_chunks"
+    collection: "colossus_evidence"
 
   tasks:
     # ── Get PROD collection info (post-sync) ──────────────────────
