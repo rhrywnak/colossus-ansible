@@ -64,3 +64,13 @@ ct_zfs_datasets: []
 #       owner: "100999"
 #       group: "100996"
 ct_bind_mounts: []
+
+# ── SSH bootstrap ────────────────────────────────────────────
+# After container creation, the role installs openssh-server and
+# deploys SSH public keys so Ansible can reach the container
+# directly for subsequent provisioning playbooks.
+#
+# ct_ssh_public_key:    Path to the operator SSH public key (on the Ansible controller)
+# ct_semaphore_pubkey:  Content of the Semaphore automation key (optional)
+ct_ssh_public_key: "~/.ssh/id_ed25519.pub"
+ct_semaphore_pubkey: ""

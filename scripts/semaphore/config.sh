@@ -1,8 +1,12 @@
 #!/bin/bash
 # config.sh — Shared configuration for Semaphore deployment scripts
 # Sourced by all scripts in this directory. Edit values here, not in individual scripts.
+#
+# Environment variable overrides:
+#   PVE_HOST — Override the Proxmox host target (e.g., for migration)
+#     Example: PVE_HOST="root@10.10.100.6" bash scripts/semaphore/01-create.sh
 
-PVE_HOST="root@10.10.100.5"     # pve-3 (infra node)
+PVE_HOST="${PVE_HOST:-root@10.10.100.5}"     # pve-3 (infra node) — overridable via env
 CTID=315
 HOSTNAME=semaphore
 IP="10.10.100.57"
@@ -29,7 +33,7 @@ ZFS_SYNC_MOUNTPOINT="/pbs-zfs/services/semaphore/sync"
 
 # Bind mount paths inside the container
 CT_DATA_MOUNT="/mnt/data"           # → ZFS_DATA
-CT_SYNC_MOUNT="/opt/db-sync"        # → ZFS_SYNC (neo4j/, postgres/, qdrant/ subdirs)
+CT_SYNC_MOUNT="/opt/db-sync"        # → ZFS_SYNC
 
 # UID/GID mapping for unprivileged container
 # semaphore user inside CT maps to these UIDs on the host

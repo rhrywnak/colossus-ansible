@@ -163,6 +163,51 @@
       failed_when: "'running' not in ct_status.stdout"
       when: ct_auto_start
 
+    # ── Bootstrap SSH (via pct exec) ─────────────────────────
+    # Ansible requires SSH to manage hosts. Fresh LXC containers
+    # have no SSH server. We install it via pct exec (which runs
+    # commands inside the container from the Proxmox host) and
+    # deploy the SSH public key for key-only authentication.
+
+    - name: "Bootstrap SSH in CT {{ ct_id }}"
+      when: ct_auto_start
+      block:
+        - name: "Install openssh-server and configure SSH"
+          ansible.builtin.shell:
+            cmd: >
+              pct exec {{ ct_id }} -- bash -c '
+              apt-get update -qq &&
+              apt-get install -y -qq openssh-server > /dev/null 2>&1 &&
+              mkdir -p /root/.ssh &&
+              chmod 700 /root/.ssh &&
+              sed -i "s/^#PermitRootLogin.*/PermitRootLogin prohibit-password/" /etc/ssh/sshd_config &&
+              systemctl enable --now ssh &&
+              systemctl restart ssh'
+
+        - name: "Read SSH public key from controller"
+          ansible.builtin.set_fact:
+            ct_ssh_pubkey: "{{ lookup('file', ct_ssh_public_key) }}"
+
+        - name: "Deploy SSH public key to CT {{ ct_id }}"
+          ansible.builtin.shell:
+            cmd: >
+              pct exec {{ ct_id }} -- bash -c
+              'echo "{{ ct_ssh_pubkey }}" > /root/.ssh/authorized_keys &&
+              chmod 600 /root/.ssh/authorized_keys'
+
+        - name: "Deploy Semaphore SSH key to CT {{ ct_id }}"
+          ansible.builtin.shell:
+            cmd: >
+              pct exec {{ ct_id }} -- bash -c
+              'echo "{{ ct_semaphore_pubkey }}" >> /root/.ssh/authorized_keys'
+          when: ct_semaphore_pubkey is defined and ct_semaphore_pubkey | length > 0
+
+        - name: "Verify SSH access to CT {{ ct_id }} ({{ ct_hostname }})"
+          ansible.builtin.wait_for:
+            host: "{{ ct_ip | regex_replace('/.*', '') }}"
+            port: 22
+            timeout: 15
+
     # ── Summary ──────────────────────────────────────────────
 
     - name: "CT creation complete"
@@ -170,5 +215,5 @@
         msg: >-
           CT {{ ct_id }} ({{ ct_hostname }}) created.
           IP: {{ ct_ip }}, Memory: {{ ct_memory }}MB, Disk: {{ ct_disk_size }}GB.
-          Bind mounts: {{ ct_bind_mounts | length }}.
+          Bind mounts: {{ ct_bind_mounts | length }}. SSH: bootstrapped.
           {% if ct_auto_start %}Status: running.{% else %}Start with: pct start {{ ct_id }}{% endif %}

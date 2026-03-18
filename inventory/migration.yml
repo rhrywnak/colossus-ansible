@@ -1,0 +1,31 @@
+---
+# inventory/migration.yml
+#
+# Temporary inventory for node migration/rebuild scenarios.
+# Used when a Proxmox node is being set up at a staging IP
+# before joining the cluster.
+#
+# Usage:
+#   ansible-playbook playbooks/create-lxc.yml \
+#     -i inventory/migration.yml \
+#     -l pve3_staging \
+#     -e @vars/ct-311-pihole.yml
+#
+# After migration is complete and the node joins the cluster
+# at its production IP, switch back to the standard inventory:
+#   ansible-playbook playbooks/create-lxc.yml \
+#     -l pve-3 \
+#     -e @vars/ct-311-pihole.yml
+#
+# Update the ansible_host below to match the staging IP of the
+# node being migrated. This file is committed to the repo as
+# a reusable tool for future node replacements.
+
+all:
+  children:
+    proxmox:
+      hosts:
+        pve3_staging:
+          ansible_host: 10.10.100.6
+          ansible_user: root
+          ansible_python_interpreter: /usr/bin/python3
