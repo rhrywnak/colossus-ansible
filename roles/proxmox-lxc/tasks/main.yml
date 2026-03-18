@@ -4,11 +4,18 @@
 # Creates an LXC container on a Proxmox host.
 # Idempotent: skips entirely if the CTID already exists.
 #
+# Supports optional ZFS dataset pre-creation and bind mounts
+# for containers that need externalized storage (golden rule).
+#
 # Required variables:
 #   ct_id:       Proxmox CTID (e.g., 311)
 #   ct_hostname: Container hostname (e.g., pihole)
 #   ct_ip:       IP with CIDR (e.g., "10.10.100.53/24")
 #   ct_gateway:  Gateway IP (e.g., "10.10.100.1")
+#
+# Optional variables:
+#   ct_zfs_datasets:  List of ZFS datasets to create before container
+#   ct_bind_mounts:   List of bind mounts to attach to container
 
 # ── Validate required variables ──────────────────────────────
 
@@ -42,6 +49,28 @@
   when: ct_exists.rc != 0
   block:
 
+    # ── ZFS dataset pre-creation (optional) ──────────────────
+
+    - name: "Create ZFS datasets for CT {{ ct_id }}"
+      when: ct_zfs_datasets | length > 0
+      block:
+        - name: "Ensure ZFS dataset exists: {{ item.name }}"
+          ansible.builtin.shell:
+            cmd: "zfs list {{ item.name }} 2>/dev/null || zfs create -p {{ item.name }}"
+          loop: "{{ ct_zfs_datasets }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: "Set ownership on ZFS dataset: {{ item.name }}"
+          ansible.builtin.file:
+            path: "/{{ item.name }}"
+            owner: "{{ item.owner | default('root') }}"
+            group: "{{ item.group | default('root') }}"
+            state: directory
+          loop: "{{ ct_zfs_datasets }}"
+          loop_control:
+            label: "{{ item.name }}"
+
     # ── Pre-flight checks ────────────────────────────────────
 
     - name: "Find Debian template"
@@ -61,7 +90,7 @@
 
     - name: "Set template path (latest version)"
       ansible.builtin.set_fact:
-        ct_template_file: "{{ ct_templates.files | sort(attribute='path') | last | attr('path') }}"
+        ct_template_file: "{{ (ct_templates.files | sort(attribute='path') | last).path }}"
 
     - name: "Set template reference"
       ansible.builtin.set_fact:
@@ -87,6 +116,16 @@
           --onboot {{ ct_onboot | ternary('1', '0') }}
           --start 0
 
+    # ── Bind mounts (optional, before start) ─────────────────
+
+    - name: "Attach bind mount {{ item.id }} to CT {{ ct_id }}"
+      ansible.builtin.command:
+        cmd: "pct set {{ ct_id }} -{{ item.id }} {{ item.host_path }},mp={{ item.ct_path }}"
+      loop: "{{ ct_bind_mounts }}"
+      loop_control:
+        label: "{{ item.id }}: {{ item.host_path }} → {{ item.ct_path }}"
+      when: ct_bind_mounts | length > 0
+
     # ── Start container ──────────────────────────────────────
 
     - name: "Start CT {{ ct_id }}"
@@ -98,6 +137,23 @@
       ansible.builtin.pause:
         seconds: 3
       when: ct_auto_start
+
+    # ── Fix bind mount ownership (after start) ───────────────
+    # Proxmox resets bind mount directory ownership to root:root
+    # on 'pct start'. Re-apply ownership after container is running.
+
+    - name: "Fix bind mount ownership after start: {{ item.host_path }}"
+      ansible.builtin.shell:
+        cmd: "chown {{ item.owner }}:{{ item.group }} {{ item.host_path }}"
+      loop: "{{ ct_bind_mounts }}"
+      loop_control:
+        label: "{{ item.id }}: {{ item.owner }}:{{ item.group }}"
+      when:
+        - ct_bind_mounts | length > 0
+        - ct_auto_start
+        - item.owner is defined
+
+    # ── Verify ───────────────────────────────────────────────
 
     - name: "Verify container is running"
       ansible.builtin.command:
@@ -114,4 +170,5 @@
         msg: >-
           CT {{ ct_id }} ({{ ct_hostname }}) created.
           IP: {{ ct_ip }}, Memory: {{ ct_memory }}MB, Disk: {{ ct_disk_size }}GB.
+          Bind mounts: {{ ct_bind_mounts | length }}.
           {% if ct_auto_start %}Status: running.{% else %}Start with: pct start {{ ct_id }}{% endif %}

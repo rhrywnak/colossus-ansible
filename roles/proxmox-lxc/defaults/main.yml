@@ -29,3 +29,38 @@ ct_unprivileged: true
 ct_nesting: true
 ct_onboot: true
 ct_auto_start: true
+
+# ── ZFS datasets (optional) ─────────────────────────────────
+# Create ZFS datasets on the host before container creation.
+# Each entry creates a dataset if it doesn't exist and sets ownership.
+# Use for containers that need externalized storage (golden rule).
+#
+# Example:
+#   ct_zfs_datasets:
+#     - name: "pbs-zfs/services/semaphore/data"
+#       owner: "100999"
+#       group: "100996"
+#     - name: "pbs-zfs/services/semaphore/sync"
+#       owner: "100999"
+#       group: "100996"
+ct_zfs_datasets: []
+
+# ── Bind mounts (optional) ──────────────────────────────────
+# Attach host directories as bind mounts inside the container.
+# Applied via 'pct set' after creation, before start.
+# Proxmox resets bind mount ownership to root:root on 'pct start',
+# so ownership is re-applied after start.
+#
+# Example:
+#   ct_bind_mounts:
+#     - id: "mp0"
+#       host_path: "/pbs-zfs/services/semaphore/data"
+#       ct_path: "/mnt/data"
+#       owner: "100999"
+#       group: "100996"
+#     - id: "mp1"
+#       host_path: "/pbs-zfs/services/semaphore/sync"
+#       ct_path: "/opt/db-sync"
+#       owner: "100999"
+#       group: "100996"
+ct_bind_mounts: []

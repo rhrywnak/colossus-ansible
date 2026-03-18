@@ -1,0 +1,52 @@
+---
+# CT-315: Semaphore (pve-3)
+#
+# Usage:
+#   ansible-playbook playbooks/create-lxc.yml -l pve-3 -e @vars/ct-315-semaphore.yml
+#
+# This creates the LXC container with ZFS-backed bind mounts for
+# externalized storage (golden rule: no persistent data inside containers).
+#
+# After creation, deploy Semaphore with:
+#   ansible-playbook playbooks/deploy-semaphore.yml
+
+ct_id: 315
+ct_hostname: semaphore
+ct_ip: "10.10.100.57/24"
+ct_gateway: "10.10.100.1"
+ct_memory: 512
+ct_swap: 256
+ct_disk_size: 4
+ct_nameserver: "10.10.100.53"
+ct_searchdomain: "cogmai.com"
+
+# ── ZFS datasets for externalized storage ────────────────────
+# Created on the Proxmox host before container creation.
+# UID 100999 / GID 100996 = semaphore user inside unprivileged CT
+# (host UID = container UID + 100000 for unprivileged mapping)
+ct_zfs_datasets:
+  - name: "pbs-zfs/services/semaphore"
+    owner: "root"
+    group: "root"
+  - name: "pbs-zfs/services/semaphore/data"
+    owner: "100999"
+    group: "100996"
+  - name: "pbs-zfs/services/semaphore/sync"
+    owner: "100999"
+    group: "100996"
+
+# ── Bind mounts ─────────────────────────────────────────────
+# Map host ZFS datasets into the container.
+# owner/group are re-applied after 'pct start' because Proxmox
+# resets bind mount ownership to root:root on every container start.
+ct_bind_mounts:
+  - id: "mp0"
+    host_path: "/pbs-zfs/services/semaphore/data"
+    ct_path: "/mnt/data"
+    owner: "100999"
+    group: "100996"
+  - id: "mp1"
+    host_path: "/pbs-zfs/services/semaphore/sync"
+    ct_path: "/opt/db-sync"
+    owner: "100999"
+    group: "100996"
