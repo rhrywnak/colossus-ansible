@@ -1,0 +1,22 @@
+---
+# provision-pbs.yml — Install and Configure Proxmox Backup Server
+#
+# Takes a bare Debian 12 VM and delivers a fully operational PBS
+# with local staging datastore (virtiofs) and TrueNAS deep storage (NFS).
+#
+# Usage:
+#   ansible-playbook playbooks/provision-pbs.yml
+#
+# Prerequisites:
+#   - VM-900 created, Debian 12 installed, SSH accessible
+#   - SSH keys deployed to root@10.10.100.242
+#   - virtiofs share attached to VM (pbs-datastore mapping)
+#   - TrueNAS NFS share accessible
+
+- name: "Provision Proxmox Backup Server"
+  hosts: pbs
+  become: true
+  vars_files:
+    - ../vars/vm-900-pbs.yml
+  roles:
+    - pbs

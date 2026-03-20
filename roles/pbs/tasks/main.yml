@@ -1,0 +1,304 @@
+---
+# roles/pbs/tasks/main.yml
+#
+# Installs Proxmox Backup Server on a Debian 12 VM and configures:
+#   - Local datastore via virtiofs (pbs-staging)
+#   - NFS datastore from TrueNAS (truenas-sync)
+#   - Sync job between the two datastores
+#
+# Prerequisites:
+#   - Debian 12 installed, SSH accessible, root keys deployed
+#   - virtiofs share attached to VM (pbs-datastore mapping)
+#   - TrueNAS NFS share accessible from 10.10.100.0/24
+#
+# Flow:
+#   1. Add PBS apt repository
+#   2. Install proxmox-backup-server
+#   3. Disable enterprise repo
+#   4. Mount virtiofs datastore
+#   5. Create pbs-staging datastore
+#   6. Mount TrueNAS NFS
+#   7. Create truenas-sync datastore
+#   8. Create sync job
+#   9. Validate
+
+# ══════════════════════════════════════════════════════════════
+# SECTION 1: Install PBS
+# ══════════════════════════════════════════════════════════════
+
+# ── Prerequisites ────────────────────────────────────────────
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install prerequisite packages
+  ansible.builtin.apt:
+    name: "{{ pbs_packages }}"
+    state: present
+
+# ── PBS APT repository ───────────────────────────────────────
+#
+# Proxmox publishes PBS packages in their own apt repo.
+# We add the no-subscription repo (free for personal use).
+# The GPG key verifies package integrity.
+
+- name: Download Proxmox GPG key
+  ansible.builtin.get_url:
+    url: "{{ pbs_apt_key_url }}"
+    dest: "{{ pbs_apt_keyring }}"
+    mode: "0644"
+
+- name: Add PBS no-subscription repository
+  ansible.builtin.apt_repository:
+    repo: "{{ pbs_apt_repo }}"
+    filename: pbs-no-subscription
+    state: present
+
+# ── Install PBS ──────────────────────────────────────────────
+
+- name: Check if PBS is already installed
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager version"
+  register: pbs_installed
+  changed_when: false
+  failed_when: false
+
+- name: Display PBS status
+  ansible.builtin.debug:
+    msg: "{{ 'PBS already installed: ' + pbs_installed.stdout if pbs_installed.rc == 0 else 'PBS not found — will install' }}"
+
+- name: Install proxmox-backup-server
+  ansible.builtin.apt:
+    name: proxmox-backup-server
+    state: present
+    update_cache: true
+  when: pbs_installed.rc != 0
+
+# ── Disable enterprise repo (if present) ─────────────────────
+#
+# PBS installer may add the enterprise repo. Disable it to prevent
+# 401 errors on apt update (same issue as Proxmox VE).
+
+- name: Check for PBS enterprise .sources file
+  ansible.builtin.stat:
+    path: "{{ pbs_enterprise_sources }}"
+  register: enterprise_sources
+
+- name: Disable PBS enterprise repo (.sources format)
+  ansible.builtin.lineinfile:
+    path: "{{ pbs_enterprise_sources }}"
+    regexp: '^Enabled:'
+    line: 'Enabled: no'
+    create: false
+  when: enterprise_sources.stat.exists
+
+- name: Check for PBS enterprise .list file
+  ansible.builtin.stat:
+    path: "{{ pbs_enterprise_list }}"
+  register: enterprise_list
+
+- name: Comment out PBS enterprise repo (.list format)
+  ansible.builtin.replace:
+    path: "{{ pbs_enterprise_list }}"
+    regexp: '^(deb\s+https://enterprise\.proxmox\.com.*)'
+    replace: '# \1'
+  when: enterprise_list.stat.exists
+
+# ── Ensure PBS services are running ──────────────────────────
+
+- name: Enable and start PBS services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - proxmox-backup
+    - proxmox-backup-proxy
+
+# ══════════════════════════════════════════════════════════════
+# SECTION 2: Configure local datastore (virtiofs)
+# ══════════════════════════════════════════════════════════════
+
+# ── Mount virtiofs share ─────────────────────────────────────
+#
+# The pbs-local/datastore ZFS dataset on pve-3 is exposed to this
+# VM via a Proxmox directory mapping + virtiofs. We mount it at
+# /mnt/pbs-staging. virtiofs mounts are added to fstab as type
+# virtiofs with the mapping ID as the device name.
+
+- name: Create virtiofs mount point
+  ansible.builtin.file:
+    path: "{{ pbs_staging_path }}"
+    state: directory
+    owner: backup
+    group: backup
+    mode: "0750"
+
+- name: Check if virtiofs is already mounted
+  ansible.builtin.command:
+    cmd: "mountpoint -q {{ pbs_staging_path }}"
+  register: virtiofs_mounted
+  changed_when: false
+  failed_when: false
+
+- name: Add virtiofs mount to fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: "{{ pbs_staging_path }}"
+    line: "{{ pbs_virtiofs_dirid | default('pbs-datastore') }} {{ pbs_staging_path }} virtiofs defaults 0 0"
+    state: present
+
+- name: Mount virtiofs datastore
+  ansible.builtin.command:
+    cmd: "mount {{ pbs_staging_path }}"
+  when: virtiofs_mounted.rc != 0
+  register: virtiofs_mount_result
+  failed_when: false
+
+- name: Display virtiofs mount status
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'virtiofs mounted at ' + pbs_staging_path if
+         (virtiofs_mounted.rc == 0 or (virtiofs_mount_result is defined and virtiofs_mount_result.rc == 0))
+         else 'WARNING: virtiofs mount failed — VM may need reboot after virtiofs share is attached. Attach with: qm set 900 -virtiofs0 dirid=pbs-datastore,cache=auto (then reboot VM)' }}
+
+# ── Create pbs-staging datastore ─────────────────────────────
+
+- name: Check if pbs-staging datastore exists
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager datastore list --output-format json"
+  register: datastore_list
+  changed_when: false
+
+- name: Create pbs-staging datastore
+  ansible.builtin.command:
+    cmd: >
+      proxmox-backup-manager datastore create {{ pbs_staging_name }} {{ pbs_staging_path }}
+      --gc-schedule "{{ pbs_staging_gc_schedule }}"
+      --prune-schedule "{{ pbs_staging_prune_schedule }}"
+      --keep-daily {{ pbs_staging_keep_daily }}
+      --keep-weekly {{ pbs_staging_keep_weekly }}
+      --keep-monthly {{ pbs_staging_keep_monthly }}
+      --reuse-datastore true
+  when: pbs_staging_name not in datastore_list.stdout
+# ══════════════════════════════════════════════════════════════
+# SECTION 3: Configure TrueNAS NFS datastore
+# ══════════════════════════════════════════════════════════════
+
+# ── Mount TrueNAS NFS ────────────────────────────────────────
+#
+# TrueNAS exports /mnt/Pool-1/backups/pbs-sync via NFS.
+# We mount it inside the PBS VM for the truenas-sync datastore.
+# Options: hard (retry forever), nfsvers=4, 1MB I/O size.
+
+- name: Create NFS mount point
+  ansible.builtin.file:
+    path: "{{ truenas_mount_path }}"
+    state: directory
+    owner: backup
+    group: backup
+    mode: "0750"
+
+- name: Check if NFS is already mounted
+  ansible.builtin.command:
+    cmd: "mountpoint -q {{ truenas_mount_path }}"
+  register: nfs_mounted
+  changed_when: false
+  failed_when: false
+
+- name: Add NFS mount to fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: "{{ truenas_mount_path }}"
+    line: "{{ truenas_nfs_source }} {{ truenas_mount_path }} nfs rw,hard,nfsvers=4,rsize=1048576,wsize=1048576 0 0"
+    state: present
+
+- name: Mount TrueNAS NFS
+  ansible.builtin.command:
+    cmd: "mount {{ truenas_mount_path }}"
+  when: nfs_mounted.rc != 0
+
+- name: Verify NFS mount
+  ansible.builtin.command:
+    cmd: "df -h {{ truenas_mount_path }}"
+  register: nfs_df
+  changed_when: false
+
+- name: Display NFS mount info
+  ansible.builtin.debug:
+    msg: "{{ nfs_df.stdout }}"
+
+# ── Create truenas-sync datastore ────────────────────────────
+
+- name: Create truenas-sync datastore
+  ansible.builtin.command:
+    cmd: >
+      proxmox-backup-manager datastore create {{ truenas_datastore_name }} {{ truenas_mount_path }}
+      --gc-schedule "{{ truenas_gc_schedule }}"
+      --prune-schedule "{{ truenas_prune_schedule }}"
+      --keep-daily {{ truenas_keep_daily }}
+      --keep-weekly {{ truenas_keep_weekly }}
+      --keep-monthly {{ truenas_keep_monthly }}
+      --reuse-datastore true
+  when: truenas_datastore_name not in datastore_list.stdout
+
+# ══════════════════════════════════════════════════════════════
+# SECTION 4: Configure sync job
+# ══════════════════════════════════════════════════════════════
+
+- name: Check if sync job exists
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager sync-job list --output-format json"
+  register: sync_job_list
+  changed_when: false
+
+- name: Create sync job (pbs-staging → truenas-sync)
+  ansible.builtin.command:
+    cmd: >
+      proxmox-backup-manager sync-job create {{ pbs_sync_job_id }}
+      --store {{ truenas_datastore_name }}
+      --remote-store {{ pbs_staging_name }}
+      --schedule "{{ pbs_sync_schedule }}"
+      --remove-vanished true
+  when: pbs_sync_job_id not in sync_job_list.stdout
+
+# ══════════════════════════════════════════════════════════════
+# SECTION 5: Validation
+# ══════════════════════════════════════════════════════════════
+
+- name: Wait for PBS web UI port (8007)
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 8007
+    timeout: 15
+    state: started
+
+- name: List all datastores
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager datastore list"
+  register: final_datastores
+  changed_when: false
+
+- name: List all sync jobs
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager sync-job list"
+  register: final_sync_jobs
+  changed_when: false
+
+- name: Installation summary
+  ansible.builtin.debug:
+    msg: |
+      PBS installation and configuration complete:
+        Web UI:     https://{{ ansible_host }}:8007
+        Datastores:
+      {{ final_datastores.stdout | indent(6, true) }}
+        Sync Jobs:
+      {{ final_sync_jobs.stdout | indent(6, true) }}
+
+      Next steps:
+        1. Get fingerprint: proxmox-backup-manager cert info | grep Fingerprint
+        2. Update Proxmox storage: pvesm set pbs-1 --fingerprint <fingerprint>
+        3. Run: ansible-playbook playbooks/manage-pbs-backups.yml

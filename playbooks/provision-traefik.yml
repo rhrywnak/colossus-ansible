@@ -1,0 +1,24 @@
+---
+# provision-traefik.yml — Install and Configure Traefik
+#
+# Takes a bare Debian LXC container and delivers a fully operational
+# Traefik reverse proxy with all routes configured and TLS enabled.
+#
+# Roles applied (in order):
+#   1. traefik       — Install binary, static config, systemd, ACME
+#   2. traefik-route — Deploy dynamic routes from inventory/host_vars/traefik.yml
+#
+# Usage:
+#   ansible-playbook playbooks/provision-traefik.yml
+#
+# Prerequisites:
+#   - CT-313 created, running, SSH accessible
+#   - vault_cloudflare_dns_api_token set in Ansible Vault
+#   - Routes defined in inventory/host_vars/traefik.yml
+
+- name: "Provision Traefik — install and configure routes"
+  hosts: traefik
+  become: true
+  roles:
+    - traefik
+    - traefik-route

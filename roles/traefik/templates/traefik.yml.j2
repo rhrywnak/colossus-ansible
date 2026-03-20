@@ -1,0 +1,57 @@
+# {{ ansible_managed }}
+# ==============================================================================
+# Traefik v3 Static Configuration — CT-313
+# ==============================================================================
+# Changes to this file require: systemctl restart traefik
+# Dynamic routes are in /etc/traefik/dynamic/ and hot-reload automatically.
+# ==============================================================================
+
+api:
+  dashboard: true
+  insecure: true
+
+entryPoints:
+  http:
+    address: ":80"
+    forwardedHeaders:
+      trustedIPs:
+{% for ip in traefik_trusted_ips %}
+        - "{{ ip }}"
+{% endfor %}
+  https:
+    address: ":443"
+    http:
+      tls: {}
+  metrics:
+    address: ":8082"
+
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addEntryPointsLabels: true
+    addRoutersLabels: true
+    addServicesLabels: true
+
+providers:
+  file:
+    directory: {{ traefik_dynamic_dir }}
+    watch: true
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "{{ traefik_acme_email }}"
+      storage: {{ traefik_acme_file }}
+      caServer: "{{ traefik_acme_server }}"
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "1.0.0.1:53"
+
+log:
+  level: {{ traefik_log_level }}
+  filePath: {{ traefik_log_dir }}/traefik.log
+
+accessLog:
+  filePath: {{ traefik_log_dir }}/access.log

@@ -1,0 +1,7 @@
+---
+# roles/cloudflared/handlers/main.yml
+
+- name: Restart cloudflared
+  ansible.builtin.systemd:
+    name: cloudflared
+    state: restarted

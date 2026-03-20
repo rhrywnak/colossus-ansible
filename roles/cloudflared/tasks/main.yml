@@ -1,0 +1,161 @@
+---
+# roles/cloudflared/tasks/main.yml
+#
+# Installs cloudflared on a bare Debian LXC container and registers
+# it as a Cloudflare Tunnel connector using a token from Ansible Vault.
+# Idempotent — skips installation if cloudflared is already present.
+#
+# Flow:
+#   1. Validate tunnel token is defined
+#   2. Install prerequisite packages
+#   3. Check if cloudflared is already installed
+#   4. Add Cloudflare GPG key and APT repository
+#   5. Install cloudflared package
+#   6. Register as systemd service with tunnel token (first deploy only)
+#   7. Enable and start the service
+#   8. Validate tunnel is connected
+
+# ── Validate required secrets ────────────────────────────────
+
+- name: Validate tunnel token is defined
+  ansible.builtin.assert:
+    that:
+      - vault_cloudflare_tunnel_token is defined
+      - vault_cloudflare_tunnel_token | length > 0
+    fail_msg: >
+      vault_cloudflare_tunnel_token must be set in Ansible Vault.
+      Run: ansible-vault edit inventory/group_vars/all/vault.yml
+      Add: vault_cloudflare_tunnel_token: "ey..."
+    quiet: true
+
+# ── Prerequisites ────────────────────────────────────────────
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install prerequisite packages
+  ansible.builtin.apt:
+    name: "{{ cloudflared_packages }}"
+    state: present
+
+# ── Check existing installation ──────────────────────────────
+
+- name: Check if cloudflared is already installed
+  ansible.builtin.stat:
+    path: /usr/bin/cloudflared
+  register: cloudflared_binary
+
+- name: Display installation status
+  ansible.builtin.debug:
+    msg: "{{ 'cloudflared already installed — skipping install' if cloudflared_binary.stat.exists else 'cloudflared not found — will install' }}"
+
+# ── Cloudflare APT repository ────────────────────────────────
+#
+# Cloudflare publishes cloudflared from their own APT repo.
+# The GPG key verifies package integrity. We use the modern
+# signed-by approach instead of the deprecated apt-key command.
+
+- name: Ensure keyrings directory exists
+  ansible.builtin.file:
+    path: /usr/share/keyrings
+    state: directory
+    mode: "0755"
+  when: not cloudflared_binary.stat.exists
+
+- name: Download Cloudflare GPG key
+  ansible.builtin.get_url:
+    url: "{{ cloudflared_gpg_url }}"
+    dest: "{{ cloudflared_gpg_keyring }}"
+    mode: "0644"
+  when: not cloudflared_binary.stat.exists
+
+- name: Add Cloudflare APT repository
+  ansible.builtin.apt_repository:
+    repo: "{{ cloudflared_apt_repo }}"
+    filename: cloudflared
+    state: present
+  when: not cloudflared_binary.stat.exists
+
+# ── Install cloudflared ──────────────────────────────────────
+
+- name: Install cloudflared
+  ansible.builtin.apt:
+    name: cloudflared
+    state: present
+    update_cache: true
+  when: not cloudflared_binary.stat.exists
+
+- name: Verify cloudflared binary
+  ansible.builtin.command:
+    cmd: "cloudflared --version"
+  register: cloudflared_version
+  changed_when: false
+
+- name: Display cloudflared version
+  ansible.builtin.debug:
+    msg: "{{ cloudflared_version.stdout }}"
+
+# ── Register tunnel as systemd service ───────────────────────
+#
+# `cloudflared service install <token>` does three things:
+#   1. Creates /etc/systemd/system/cloudflared.service
+#   2. Embeds the tunnel token in the service unit
+#   3. Enables the service
+#
+# This only needs to run once. On subsequent runs, the service
+# file already exists and we skip this step.
+
+- name: Check if cloudflared service is already registered
+  ansible.builtin.stat:
+    path: /etc/systemd/system/cloudflared.service
+  register: cloudflared_service
+
+- name: Register cloudflared tunnel service
+  ansible.builtin.command:
+    cmd: "cloudflared service install {{ cloudflared_tunnel_token }}"
+  when: not cloudflared_service.stat.exists
+  no_log: true
+  register: service_install
+
+# ── Enable and start ─────────────────────────────────────────
+
+- name: Enable and start cloudflared
+  ansible.builtin.systemd:
+    name: cloudflared
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ── Validation ───────────────────────────────────────────────
+#
+# cloudflared doesn't expose a local health endpoint by default.
+# We verify the service is running and check the process is active.
+
+- name: Wait for cloudflared to stabilize
+  ansible.builtin.pause:
+    seconds: 5
+
+- name: Verify cloudflared service is active
+  ansible.builtin.systemd:
+    name: cloudflared
+  register: cloudflared_status
+
+- name: Assert cloudflared is running
+  ansible.builtin.assert:
+    that:
+      - cloudflared_status.status.ActiveState == "active"
+    fail_msg: >
+      cloudflared service is not running.
+      Check: systemctl status cloudflared
+      Logs: journalctl -u cloudflared --no-pager -n 50
+    success_msg: "cloudflared is running — verify tunnel status in Cloudflare dashboard"
+
+- name: Installation summary
+  ansible.builtin.debug:
+    msg: |
+      cloudflared installation complete:
+        Version:   {{ cloudflared_version.stdout }}
+        Service:   active
+        Next step: Verify tunnel is 'Healthy' in Cloudflare Zero Trust dashboard

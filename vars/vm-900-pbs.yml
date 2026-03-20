@@ -1,0 +1,62 @@
+---
+# VM-900 Proxmox Backup Server — Provisioning Recipe
+#
+# Used with: ansible-playbook playbooks/create-pbs-vm.yml -l pve-3 -e @vars/vm-900-pbs.yml
+#
+# This is a Debian 12 VM (not CoreOS) with PBS installed via apt.
+# The only manual step is the Debian installer — everything else is automated.
+#
+# After VM creation + Debian install + SSH key deployment, run:
+#   ansible-playbook playbooks/provision-pbs.yml
+
+# ── VM Identity ─────────────────────────────────────────────
+vm_id: 900
+vm_name: pbs
+vm_description: "Proxmox Backup Server (Debian 12 + PBS apt package)"
+proxmox_node: pve-3
+
+# ── Hardware ────────────────────────────────────────────────
+vm_cores: 2
+vm_memory: 2048
+vm_disk_size: 16G
+vm_storage: local-lvm
+vm_bridge: vmbr0
+
+# ── Network ─────────────────────────────────────────────────
+vm_ip: 10.10.100.242
+vm_cidr: 24
+vm_gateway: 10.10.100.1
+vm_nameserver: 10.10.100.53
+
+# ── ISO ─────────────────────────────────────────────────────
+# Update filename if Debian version changes
+vm_iso: "local:iso/proxmox-backup-server_4.1-1.iso"
+
+# ── PBS Datastore (virtiofs) ────────────────────────────────
+# pbs-local/datastore ZFS dataset on pve-3 (461GB SP A60 NVMe)
+# Mapped via Proxmox directory mapping: pbs-datastore
+pbs_virtiofs_dirid: "pbs-datastore"
+pbs_virtiofs_cache: "auto"
+
+# ── PBS Datastores ──────────────────────────────────────────
+pbs_staging_path: "/mnt/pbs-staging"
+pbs_staging_name: "pbs-staging"
+ppbs_staging_gc_schedule: "*-*-* 03:00"
+pbs_staging_prune_schedule: "*-*-* 04:00"
+pbs_staging_keep_daily: 14
+pbs_staging_keep_weekly: 8
+pbs_staging_keep_monthly: 12
+
+# ── TrueNAS NFS (deep storage) ─────────────────────────────
+truenas_nfs_source: "10.10.0.38:/mnt/Pool-1/backups/pbs-sync"
+truenas_mount_path: "/mnt/truenas-pbs"
+truenas_datastore_name: "truenas-sync"
+ttruenas_gc_schedule: "Sun *-*-* 03:00"
+truenas_prune_schedule: "Mon *-*-* 04:00"
+truenas_keep_daily: 14
+truenas_keep_weekly: 8
+truenas_keep_monthly: 12
+
+# ── Sync Job ────────────────────────────────────────────────
+pbs_sync_job_id: "staging-to-truenas"
+pbs_sync_schedule: "*-*-* 02:00"

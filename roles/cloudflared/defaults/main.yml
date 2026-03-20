@@ -1,0 +1,24 @@
+---
+# roles/cloudflared/defaults/main.yml
+#
+# Cloudflare Tunnel (cloudflared) installation and configuration.
+# This role installs cloudflared on a bare Debian LXC container
+# and registers it as a systemd service using a tunnel token.
+#
+# Override any variable in inventory/host_vars/cloudflared.yml.
+
+# ── Tunnel token ─────────────────────────────────────────────
+# Must be set in Ansible Vault: vault_cloudflare_tunnel_token
+# This is the long string starting with 'ey...' from the
+# Cloudflare Zero Trust dashboard → Tunnels → Configure.
+cloudflared_tunnel_token: "{{ vault_cloudflare_tunnel_token }}"
+
+# ── Prerequisite packages ────────────────────────────────────
+cloudflared_packages:
+  - curl
+  - gnupg
+
+# ── APT repository ───────────────────────────────────────────
+cloudflared_gpg_url: "https://pkg.cloudflare.com/cloudflare-main.gpg"
+cloudflared_gpg_keyring: "/usr/share/keyrings/cloudflare-public-v2.gpg"
+cloudflared_apt_repo: "deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main"

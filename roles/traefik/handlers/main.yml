@@ -1,0 +1,7 @@
+---
+# roles/traefik/handlers/main.yml
+
+- name: Restart traefik
+  ansible.builtin.systemd:
+    name: traefik
+    state: restarted

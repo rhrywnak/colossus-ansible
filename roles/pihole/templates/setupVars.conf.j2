@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+# Pi-hole unattended install configuration
+# Used by the Pi-hole installer (--unattended flag).
+# After installation, Pi-hole reads its config from /etc/pihole/pihole.toml.
+# This file is only consumed during initial install.
+
+PIHOLE_INTERFACE={{ pihole_interface }}
+PIHOLE_DNS_1={{ pihole_upstream_dns_1 }}
+PIHOLE_DNS_2={{ pihole_upstream_dns_2 }}
+QUERY_LOGGING={{ pihole_query_logging | lower }}
+INSTALL_WEB_SERVER={{ pihole_install_web_server | lower }}
+INSTALL_WEB_INTERFACE={{ pihole_install_web_interface | lower }}
+LIGHTTPD_ENABLED={{ pihole_lighttpd_enabled | lower }}
+CACHE_SIZE={{ pihole_cache_size }}
+DNS_FQDN_REQUIRED={{ pihole_dns_fqdn_required | lower }}
+DNS_BOGUS_PRIV={{ pihole_dns_bogus_priv | lower }}
+DNSSEC={{ pihole_dnssec | lower }}
+REV_SERVER=false
+BLOCKING_ENABLED={{ pihole_blocking_enabled | lower }}
+WEBPASSWORD=

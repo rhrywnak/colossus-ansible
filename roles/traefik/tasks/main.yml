@@ -1,0 +1,234 @@
+---
+# roles/traefik/tasks/main.yml
+#
+# Installs Traefik v3 on a bare Debian LXC container from the official
+# GitHub release binary. Idempotent — skips download if binary exists
+# at the correct version.
+#
+# Flow:
+#   1. Validate Cloudflare API token is defined
+#   2. Install prerequisite packages
+#   3. Check if Traefik is already installed at correct version
+#   4. Download and install Traefik binary
+#   5. Create directory structure
+#   6. Deploy static configuration (traefik.yml)
+#   7. Deploy Cloudflare API token environment file
+#   8. Deploy dynamic TLS configuration
+#   9. Deploy systemd service unit
+#  10. Enable and start service
+#  11. Validate ports and dashboard
+
+# ── Validate required secrets ────────────────────────────────
+
+- name: Validate Cloudflare API token is defined
+  ansible.builtin.assert:
+    that:
+      - vault_cloudflare_dns_api_token is defined
+      - vault_cloudflare_dns_api_token | length > 0
+    fail_msg: >
+      vault_cloudflare_dns_api_token must be set in Ansible Vault.
+      Run: ansible-vault edit inventory/group_vars/all/vault.yml
+      Add: vault_cloudflare_dns_api_token: "your-token-here"
+    quiet: true
+
+# ── Prerequisites ────────────────────────────────────────────
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install prerequisite packages
+  ansible.builtin.apt:
+    name: "{{ traefik_packages }}"
+    state: present
+
+# ── Check existing installation ──────────────────────────────
+
+- name: Check if Traefik binary exists
+  ansible.builtin.stat:
+    path: "{{ traefik_binary_path }}"
+  register: traefik_binary
+
+- name: Check installed Traefik version
+  ansible.builtin.command:
+    cmd: "{{ traefik_binary_path }} version"
+  register: traefik_installed_version
+  changed_when: false
+  failed_when: false
+  when: traefik_binary.stat.exists
+
+- name: Determine if install/upgrade needed
+  ansible.builtin.set_fact:
+    traefik_needs_install: >-
+      {{
+        not traefik_binary.stat.exists or
+        (traefik_installed_version.stdout is defined and
+         traefik_version not in traefik_installed_version.stdout)
+      }}
+
+- name: Display installation status
+  ansible.builtin.debug:
+    msg: "{{ 'Traefik ' + traefik_version + ' install needed' if traefik_needs_install else 'Traefik ' + traefik_version + ' already installed' }}"
+
+# ── Download and install binary ──────────────────────────────
+#
+# Traefik is distributed as a static binary — no package manager
+# needed. Download the tarball, extract just the binary to
+# /usr/local/bin/. This is the same approach used by the original
+# install script.
+
+- name: Download Traefik tarball
+  ansible.builtin.get_url:
+    url: "{{ traefik_download_url }}"
+    dest: /tmp/traefik.tar.gz
+    mode: "0644"
+  when: traefik_needs_install
+
+- name: Extract Traefik binary
+  ansible.builtin.shell:
+    cmd: "tar -xzf /tmp/traefik.tar.gz -C /usr/local/bin/ traefik && chmod +x {{ traefik_binary_path }}"
+  when: traefik_needs_install
+  notify: Restart traefik
+
+- name: Clean up tarball
+  ansible.builtin.file:
+    path: /tmp/traefik.tar.gz
+    state: absent
+
+- name: Verify Traefik binary
+  ansible.builtin.command:
+    cmd: "{{ traefik_binary_path }} version"
+  register: traefik_version_check
+  changed_when: false
+
+- name: Display Traefik version
+  ansible.builtin.debug:
+    msg: "{{ traefik_version_check.stdout_lines | first }}"
+
+# ── Create directory structure ───────────────────────────────
+
+- name: Create Traefik directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ traefik_config_root }}"
+    - "{{ traefik_dynamic_dir }}"
+    - "{{ traefik_log_dir }}"
+
+- name: Create acme.json (strict permissions required by Traefik)
+  ansible.builtin.file:
+    path: "{{ traefik_acme_file }}"
+    state: touch
+    owner: root
+    group: root
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+
+# ── Deploy static configuration ──────────────────────────────
+#
+# traefik.yml is the static config — changes require a service restart.
+# Defines entrypoints (80, 443, 8082), ACME cert resolver, file provider,
+# Prometheus metrics, and logging.
+
+- name: Deploy Traefik static configuration
+  ansible.builtin.template:
+    src: traefik.yml.j2
+    dest: "{{ traefik_config_root }}/traefik.yml"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  notify: Restart traefik
+
+# ── Deploy Cloudflare API token ──────────────────────────────
+#
+# Traefik reads the Cloudflare API token from an environment file
+# referenced in the systemd unit. This keeps the token out of the
+# static config file.
+
+- name: Deploy Cloudflare environment file
+  ansible.builtin.copy:
+    dest: "{{ traefik_config_root }}/cloudflare.env"
+    content: |
+      CF_DNS_API_TOKEN={{ traefik_cloudflare_api_token }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart traefik
+
+# ── Deploy dynamic TLS configuration ────────────────────────
+#
+# Minimum TLS 1.2. This is in the dynamic directory so Traefik
+# hot-reloads it without a restart.
+
+- name: Deploy dynamic TLS configuration
+  ansible.builtin.template:
+    src: tls.yml.j2
+    dest: "{{ traefik_dynamic_dir }}/tls.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+# ── Deploy systemd service ──────────────────────────────────
+
+- name: Deploy Traefik systemd service unit
+  ansible.builtin.template:
+    src: traefik.service.j2
+    dest: /etc/systemd/system/traefik.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart traefik
+
+# ── Enable and start ─────────────────────────────────────────
+
+- name: Enable and start Traefik
+  ansible.builtin.systemd:
+    name: traefik
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ── Validation ───────────────────────────────────────────────
+
+- name: Wait for HTTPS port (443) to be listening
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 443
+    timeout: 15
+    state: started
+
+- name: Wait for HTTP port (80) to be listening
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 80
+    timeout: 15
+    state: started
+
+- name: Verify Traefik dashboard API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:8080/api/overview"
+    return_content: true
+    status_code: 200
+  register: dashboard_check
+  retries: 3
+  delay: 5
+  until: dashboard_check.status == 200
+
+- name: Installation summary
+  ansible.builtin.debug:
+    msg: |
+      Traefik installation complete:
+        Version:   {{ traefik_version_check.stdout_lines | first }}
+        HTTP:      port 80 listening
+        HTTPS:     port 443 listening
+        Dashboard: http://{{ ansible_host }}:8080
+        Metrics:   port 8082
+        ACME:      {{ traefik_acme_email }} via Cloudflare DNS challenge

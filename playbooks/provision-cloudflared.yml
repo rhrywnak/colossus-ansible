@@ -1,0 +1,18 @@
+---
+# provision-cloudflared.yml — Install and Configure Cloudflare Tunnel
+#
+# Takes a bare Debian LXC container and delivers a fully operational
+# Cloudflare Tunnel connector registered with the Colossus tunnel.
+#
+# Usage:
+#   ansible-playbook playbooks/provision-cloudflared.yml
+#
+# Prerequisites:
+#   - CT-312 created, running, SSH accessible
+#   - vault_cloudflare_tunnel_token set in Ansible Vault
+
+- name: "Provision cloudflared — install and register tunnel"
+  hosts: cloudflared
+  become: true
+  roles:
+    - cloudflared

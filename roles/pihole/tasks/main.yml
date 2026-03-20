@@ -1,0 +1,197 @@
+---
+# roles/pihole/tasks/main.yml
+#
+# Installs Pi-hole on a bare Debian LXC container via the official
+# unattended installer. Idempotent — skips installation if Pi-hole
+# is already present.
+#
+# Flow:
+#   1. Validate vault password is defined
+#   2. Install prerequisite packages
+#   3. Check if Pi-hole is already installed
+#   4. Deploy setupVars.conf (installer config)
+#   5. Run unattended installer (first deploy only)
+#   6. Set admin password
+#   7. Update gravity (block lists)
+#   8. Validate DNS and web interface
+
+# ── Validate required secrets ────────────────────────────────
+
+- name: Validate Pi-hole admin password is defined
+  ansible.builtin.assert:
+    that:
+      - vault_pihole_admin_password is defined
+      - vault_pihole_admin_password | length > 0
+    fail_msg: >
+      vault_pihole_admin_password must be set in Ansible Vault.
+      Run: ansible-vault edit secrets/vault.yml
+      Add: vault_pihole_admin_password: "your-password-here"
+    quiet: true
+
+# ── Prerequisites ────────────────────────────────────────────
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install prerequisite packages
+  ansible.builtin.apt:
+    name: "{{ pihole_packages }}"
+    state: present
+
+# ── Check existing installation ──────────────────────────────
+#
+# Pi-hole installs its CLI to /usr/local/bin/pihole. If it exists,
+# we skip the installer entirely. This makes the role safe to run
+# repeatedly — it won't reinstall or break an existing Pi-hole.
+
+- name: Check if Pi-hole is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/pihole
+  register: pihole_binary
+
+- name: Display installation status
+  ansible.builtin.debug:
+    msg: "{{ 'Pi-hole already installed — skipping installer' if pihole_binary.stat.exists else 'Pi-hole not found — will install' }}"
+
+# ── Deploy setupVars.conf ────────────────────────────────────
+#
+# The Pi-hole unattended installer reads /etc/pihole/setupVars.conf
+# to determine configuration. We template it from role variables.
+# WEBPASSWORD is left blank here — we set it properly after install
+# using `pihole -a -p` which handles hashing correctly.
+
+- name: Ensure /etc/pihole directory exists
+  ansible.builtin.file:
+    path: /etc/pihole
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy setupVars.conf
+  ansible.builtin.template:
+    src: setupVars.conf.j2
+    dest: /etc/pihole/setupVars.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: not pihole_binary.stat.exists
+
+# ── Run Pi-hole installer ───────────────────────────────────
+#
+# The official installer is a bash script downloaded from pi-hole.net.
+# With --unattended flag, it reads setupVars.conf and requires no
+# interactive input. Takes 1-3 minutes to complete.
+#
+# What it installs:
+#   - pihole-FTL (the DNS/DHCP engine, replaces dnsmasq)
+#   - lighttpd + PHP (web admin interface)
+#   - pihole CLI tool (/usr/local/bin/pihole)
+#   - Gravity database (block lists)
+#   - systemd service: pihole-FTL
+
+- name: Run Pi-hole unattended installer
+  ansible.builtin.shell:
+    cmd: "curl -sSL {{ pihole_installer_url }} | bash /dev/stdin --unattended"
+  args:
+    creates: /usr/local/bin/pihole
+  when: not pihole_binary.stat.exists
+  register: pihole_install
+  changed_when: pihole_install.rc == 0
+
+- name: Display installer output
+  ansible.builtin.debug:
+    msg: "{{ pihole_install.stdout_lines | default([]) | last | default('Install complete') }}"
+  when: pihole_install is changed
+
+# ── Set admin password ───────────────────────────────────────
+#
+# `pihole -a -p` sets the web admin password. Pi-hole hashes it
+# internally — we never store the hash ourselves. This task runs
+# on every playbook execution to ensure the password matches vault.
+# The command is idempotent (re-setting the same password is harmless).
+
+- name: Set Pi-hole admin password
+  ansible.builtin.command:
+    cmd: "pihole -a -p {{ pihole_admin_password }}"
+  changed_when: true
+  no_log: true
+
+# ── Configure DNS listening mode ─────────────────────────────
+#
+# Pi-hole v6 defaults to LOCAL (only respond to queries from the
+# local subnet). In a multi-VLAN homelab, this silently drops DNS
+# queries from other subnets — ping works but dig times out.
+# Set to ALL so all VLANs can resolve via Pi-hole.
+
+- name: Get current DNS listening mode
+  ansible.builtin.command:
+    cmd: "pihole-FTL --config dns.listeningMode"
+  register: current_listening_mode
+  changed_when: false
+
+- name: Set DNS listening mode to {{ pihole_listening_mode }}
+  ansible.builtin.command:
+    cmd: "pihole-FTL --config dns.listeningMode {{ pihole_listening_mode }}"
+  when: current_listening_mode.stdout | trim != pihole_listening_mode
+  notify: Restart pihole-FTL
+
+# ── Update gravity (block lists) ────────────────────────────
+#
+# Gravity is Pi-hole's block list database. The installer downloads
+# an initial set, but running `pihole -g` ensures we have the latest.
+# This is safe to run multiple times.
+
+- name: Update Pi-hole gravity (block lists)
+  ansible.builtin.command:
+    cmd: "pihole -g"
+  register: gravity_update
+  changed_when: "'Number of gravity domains' in gravity_update.stdout"
+
+# ── Ensure service is running ────────────────────────────────
+
+- name: Enable and start pihole-FTL
+  ansible.builtin.systemd:
+    name: pihole-FTL
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ── Validation ───────────────────────────────────────────────
+
+- name: Wait for DNS port (53) to be listening
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 53
+    timeout: 15
+    state: started
+
+- name: Wait for web interface port (80) to be listening
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 80
+    timeout: 15
+    state: started
+
+- name: Verify DNS resolution (external domain)
+  ansible.builtin.command:
+    cmd: "dig +short google.com @127.0.0.1"
+  register: dns_test
+  changed_when: false
+  failed_when: dns_test.stdout | length == 0
+
+- name: Display Pi-hole status
+  ansible.builtin.command:
+    cmd: "pihole status"
+  register: pihole_status
+  changed_when: false
+
+- name: Installation summary
+  ansible.builtin.debug:
+    msg: |
+      Pi-hole installation complete:
+        DNS:       port 53 listening
+        Web admin: http://{{ ansible_host }}/admin/
+        Status:    {{ pihole_status.stdout_lines | select('search', 'FTL') | first | default('running') }}

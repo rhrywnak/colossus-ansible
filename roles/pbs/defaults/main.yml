@@ -1,0 +1,49 @@
+---
+# roles/pbs/defaults/main.yml
+#
+# Proxmox Backup Server installation and configuration.
+# This role installs PBS from the apt repository on a Debian 12 VM,
+# then configures datastores, NFS mount, and sync jobs.
+#
+# Override any variable via extra vars or host_vars.
+
+# ── PBS APT repository ──────────────────────────────────────
+# PBS packages are published for bookworm (Debian 12).
+pbs_apt_repo: "deb http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription"
+pbs_apt_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+pbs_apt_keyring: "/usr/share/keyrings/proxmox-release-bookworm.gpg"
+
+# ── PBS enterprise repo (will be disabled) ───────────────────
+pbs_enterprise_sources: "/etc/apt/sources.list.d/pbs-enterprise.sources"
+pbs_enterprise_list: "/etc/apt/sources.list.d/pbs-enterprise.list"
+
+# ── Local datastore (virtiofs from pve-3) ────────────────────
+# The pbs-local/datastore ZFS dataset on pve-3 is exposed via
+# virtiofs directory mapping and mounted inside the PBS VM.
+pbs_staging_path: "/mnt/pbs-staging"
+pbs_staging_name: "pbs-staging"
+pbs_staging_gc_schedule: "*-*-* 03:00"
+pbs_staging_prune_schedule: "*-*-* 04:00"
+pbs_staging_keep_daily: 14
+pbs_staging_keep_weekly: 8
+pbs_staging_keep_monthly: 12
+
+# ── TrueNAS NFS datastore (deep storage) ────────────────────
+truenas_nfs_source: "10.10.0.38:/mnt/Pool-1/backups/pbs-sync"
+truenas_mount_path: "/mnt/truenas-pbs"
+truenas_datastore_name: "truenas-sync"
+truenas_gc_schedule: "Sun *-*-* 03:00"
+truenas_prune_schedule: "Mon *-*-* 04:00"
+truenas_keep_daily: 14
+truenas_keep_weekly: 8
+truenas_keep_monthly: 12
+
+# ── Sync job ─────────────────────────────────────────────────
+pbs_sync_job_id: "staging-to-truenas"
+pbs_sync_schedule: "*-*-* 02:00"
+
+# ── Prerequisite packages ────────────────────────────────────
+pbs_packages:
+  - nfs-common
+  - wget
+  - gnupg

@@ -1,0 +1,53 @@
+---
+# roles/pihole/defaults/main.yml
+#
+# Pi-hole installation and base configuration.
+# This role installs Pi-hole on a bare Debian LXC container.
+# DNS record management is handled separately by the pihole-dns role.
+#
+# Override any variable in inventory/host_vars/pihole.yml.
+
+# ── Pi-hole installer ───────────────────────────────────────
+pihole_installer_url: "https://install.pi-hole.net"
+
+# ── Network interface ────────────────────────────────────────
+pihole_interface: "eth0"
+
+# ── DNS listening mode ──────────────────────────────────────
+# Controls which networks Pi-hole responds to DNS queries from.
+# Pi-hole v6 uses pihole-FTL --config to manage this setting.
+#   LOCAL — only respond to queries from the local subnet
+#   ALL   — respond to queries from any source
+# Must be ALL for cross-VLAN/multi-subnet environments.
+pihole_listening_mode: "ALL"
+
+# ── Upstream DNS servers ─────────────────────────────────────
+# Used when Pi-hole itself needs to resolve external domains.
+# Cloudflare by default — fast, privacy-respecting.
+pihole_upstream_dns_1: "1.1.1.1"
+pihole_upstream_dns_2: "1.0.0.1"
+
+# ── Web interface ────────────────────────────────────────────
+pihole_install_web_server: true
+pihole_install_web_interface: true
+pihole_lighttpd_enabled: true
+
+# ── DNS cache ────────────────────────────────────────────────
+pihole_cache_size: 10000
+
+# ── Privacy / security ───────────────────────────────────────
+pihole_query_logging: true
+pihole_dns_fqdn_required: false
+pihole_dns_bogus_priv: true
+pihole_dnssec: false
+pihole_blocking_enabled: true
+
+# ── Admin password ───────────────────────────────────────────
+# Must be set in Ansible Vault: vault_pihole_admin_password
+# The role will fail if this is not defined.
+pihole_admin_password: "{{ vault_pihole_admin_password }}"
+
+# ── Prerequisite packages ────────────────────────────────────
+pihole_packages:
+  - curl
+  - procps

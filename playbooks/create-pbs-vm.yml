@@ -1,0 +1,74 @@
+---
+# create-pbs-vm.yml — Create Debian 12 VM for Proxmox Backup Server
+#
+# Creates a standard Debian VM with ISO attached for manual OS install.
+# This is NOT a CoreOS VM — it uses a standard qm create flow.
+#
+# Usage:
+#   ansible-playbook playbooks/create-pbs-vm.yml -l pve-3 -e @vars/vm-900-pbs.yml
+#
+# After this playbook:
+#   1. Open Proxmox console for VM-900
+#   2. Install Debian 12 (minimal, SSH server only)
+#   3. Remove CD-ROM: qm set 900 --ide2 none
+#   4. Deploy SSH keys to root@10.10.100.242
+#   5. Run: ansible-playbook playbooks/provision-pbs.yml
+
+- name: "Create PBS VM (Debian 12)"
+  hosts: "{{ target_node | default('pve-3') }}"
+  gather_facts: false
+
+  tasks:
+
+    # ── Validate required variables ──────────────────────────
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - vm_id is defined
+          - vm_name is defined
+          - vm_iso is defined
+        fail_msg: "Required: vm_id, vm_name, vm_iso"
+        quiet: true
+
+    # ── Check if VM already exists ───────────────────────────
+    - name: "Check if VM {{ vm_id }} already exists"
+      ansible.builtin.command:
+        cmd: "qm status {{ vm_id }}"
+      register: vm_exists
+      changed_when: false
+      failed_when: false
+
+    - name: "VM {{ vm_id }} already exists — skipping"
+      ansible.builtin.debug:
+        msg: "VM {{ vm_id }} ({{ vm_name }}) already exists. No changes made."
+      when: vm_exists.rc == 0
+
+    # ── Create VM ────────────────────────────────────────────
+    - name: "Create VM {{ vm_id }} ({{ vm_name }})"
+      when: vm_exists.rc != 0
+      block:
+
+        - name: "Create VM {{ vm_id }}"
+          ansible.builtin.command:
+            cmd: >
+              qm create {{ vm_id }}
+              --name {{ vm_name }}
+              --machine q35
+              --description "{{ vm_description | default('') }}"
+              --cores {{ vm_cores }}
+              --memory {{ vm_memory }}
+              --net0 "virtio,bridge={{ vm_bridge }}"
+              --scsi0 "{{ vm_storage }}:{{ vm_disk_size | regex_replace('G', '') }}"
+              --scsihw virtio-scsi-pci
+              --ide2 "{{ vm_iso }},media=cdrom"
+              --boot "order=ide2;scsi0"
+              --ostype l26
+              --onboot 1
+
+        - name: "VM creation complete"
+          ansible.builtin.debug:
+            msg: >-
+              VM {{ vm_id }} ({{ vm_name }}) created.
+              Cores: {{ vm_cores }}, Memory: {{ vm_memory }}MB, Disk: {{ vm_disk_size }}.
+              ISO: {{ vm_iso }}.
+              Next: Open Proxmox console and install Debian 12.

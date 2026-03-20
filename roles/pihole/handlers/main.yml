@@ -1,0 +1,7 @@
+---
+# roles/pihole/handlers/main.yml
+
+- name: Restart pihole-FTL
+  ansible.builtin.systemd:
+    name: pihole-FTL
+    state: restarted

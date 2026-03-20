@@ -35,9 +35,8 @@ vm_bridge: vmbr0
 vm_nameserver: 10.10.100.53
 
 # ── Storage ─────────────────────────────────────────────────
-vm_boot_storage: pbs-zfs
-vm_ignition_storage: coreos-snippets
-vm_ignition_file: authentik.ign
+vm_storage: pbs-zfs
+vm_ignition: authentik.ign
 
 # ── ZFS Datasets ────────────────────────────────────────────
 # Created by colossus-homelab/authentik/01-create-zfs-datasets.sh
@@ -55,6 +54,13 @@ directory_mappings:
     path: /pbs-zfs/services/authentik/postgres
   - name: authentik-data
     path: /pbs-zfs/services/authentik/data
+
+# ── virtiofs shares (consumed by proxmox-vm role) ───────────
+vm_virtiofs_shares:
+  - dirid: "authentik-postgres"
+    cache: "always"
+  - dirid: "authentik-data"
+    cache: "always"
 
 # ── Container Images ────────────────────────────────────────
 authentik_version: "2025.12"

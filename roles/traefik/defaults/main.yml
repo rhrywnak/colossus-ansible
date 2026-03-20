@@ -1,0 +1,43 @@
+---
+# roles/traefik/defaults/main.yml
+#
+# Traefik v3 reverse proxy installation and static configuration.
+# This role installs Traefik on a bare Debian LXC container.
+# Dynamic route configuration is handled separately by the traefik-route role.
+#
+# Override any variable in inventory/host_vars/traefik.yml.
+
+# ── Traefik version ─────────────────────────────────────────
+traefik_version: "v3.3.3"
+traefik_download_url: "https://github.com/traefik/traefik/releases/download/{{ traefik_version }}/traefik_{{ traefik_version }}_linux_amd64.tar.gz"
+traefik_binary_path: "/usr/local/bin/traefik"
+
+# ── Directory paths ──────────────────────────────────────────
+traefik_config_root: "/etc/traefik"
+traefik_dynamic_dir: "{{ traefik_config_root }}/dynamic"
+traefik_log_dir: "/var/log/traefik"
+traefik_acme_file: "{{ traefik_config_root }}/acme.json"
+
+# ── ACME / Let's Encrypt ────────────────────────────────────
+traefik_acme_email: "Roman.hrywnak@gmail.com"
+traefik_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+
+# ── Cloudflare DNS challenge ─────────────────────────────────
+# Must be set in Ansible Vault: vault_cloudflare_dns_api_token
+# Create at: https://dash.cloudflare.com/profile/api-tokens
+# Template: Edit zone DNS, Scope: Zone → cogmai.com only
+traefik_cloudflare_api_token: "{{ vault_cloudflare_dns_api_token }}"
+
+# ── Entrypoints ──────────────────────────────────────────────
+traefik_trusted_ips:
+  - "10.10.100.0/24"
+  - "10.10.0.0/24"
+
+# ── Logging ──────────────────────────────────────────────────
+traefik_log_level: "INFO"
+
+# ── Prerequisite packages ────────────────────────────────────
+traefik_packages:
+  - curl
+  - wget
+  - ca-certificates

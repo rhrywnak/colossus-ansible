@@ -1,0 +1,25 @@
+---
+# provision-pihole.yml — Install and Configure Pi-hole
+#
+# Takes a bare Debian LXC container and delivers a fully operational
+# Pi-hole DNS server with all local DNS records configured.
+#
+# Roles applied (in order):
+#   1. pihole     — Install Pi-hole, set admin password, update gravity
+#   2. pihole-dns — Sync DNS records from inventory/host_vars/pihole.yml
+#
+# Usage:
+#   ansible-playbook playbooks/provision-pihole.yml                 # execute
+#   ansible-playbook playbooks/provision-pihole.yml --check --diff  # dry-run (limited — installer can't check mode)
+#
+# Prerequisites:
+#   - CT-311 created, running, SSH accessible
+#   - vault_pihole_admin_password set in Ansible Vault
+#   - DNS records defined in inventory/host_vars/pihole.yml
+
+- name: "Provision Pi-hole — install and configure"
+  hosts: pihole
+  become: true
+  roles:
+    - pihole
+    - pihole-dns
