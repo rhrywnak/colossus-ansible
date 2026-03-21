@@ -1,0 +1,42 @@
+---
+# playbooks/stop-alloy.yml
+#
+# Stop and disable Grafana Alloy agents on all managed hosts.
+#
+# Use this when the central monitoring stack (VM-314) is offline or being
+# replaced. Agents are left installed — just stopped and disabled so they
+# don't waste resources trying to push to a dead endpoint.
+#
+# To re-enable later (or before deploying replacement agents):
+#   ansible-playbook playbooks/deploy-alloy.yml
+#
+# Usage:
+#   ansible-playbook playbooks/stop-alloy.yml
+#
+#   # Dry run first:
+#   ansible-playbook playbooks/stop-alloy.yml --check --diff
+#
+#   # Single host test:
+#   ansible-playbook playbooks/stop-alloy.yml -l pihole
+
+- name: Stop and disable Alloy agents
+  hosts: all:!truenas:!monitoring
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Stop and disable alloy service
+      ansible.builtin.systemd:
+        name: alloy.service
+        state: stopped
+        enabled: false
+      register: alloy_stop
+      failed_when: false
+
+    - name: Report result
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ 'stopped and disabled' if alloy_stop.changed else
+             ('already stopped' if not alloy_stop.failed else
+              'service not found (OK)') }}
