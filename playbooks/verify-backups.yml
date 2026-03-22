@@ -32,6 +32,7 @@
       - { vmid: "313",  name: "traefik" }
       - { vmid: "314",  name: "monitoring" }
       - { vmid: "315",  name: "semaphore" }
+      - { vmid: "316",  name: "authentik" }
 
     # How far back to look (seconds). 26 hours = daily + 2h grace.
     backup_window_seconds: 93600

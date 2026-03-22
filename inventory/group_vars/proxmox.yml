@@ -43,4 +43,9 @@ pbs_backup_jobs:
   - name: backup-semaphore
     vmid: 315
     notes: "Semaphore UI scheduled backup"
+  
+  - name: backup-authentik
+    vmid: 316
+    notes: "Authentik IdP scheduled backup"
+
 ansible_python_interpreter: /usr/bin/python3
