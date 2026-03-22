@@ -17,3 +17,4 @@ id_*
 ansible.cfg-SAVE
 # group_vars/ — encrypted vault.yml is safe to commit
 vault.yml.broken
+secrets/
