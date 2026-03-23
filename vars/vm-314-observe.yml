@@ -1,0 +1,14 @@
+---
+# VM-314: Colossus Observe (pve-3)
+# Usage: ansible-playbook playbooks/create-vm.yml -l pve-3 -e @vars/vm-314-observe.yml
+vm_id: 314
+vm_name: observe
+vm_ignition: observe.ign
+vm_cores: 2
+vm_memory: 2048
+vm_disk_grow: "+18G"
+vm_storage: local-lvm
+
+vm_virtiofs_shares:
+  - dirid: observe-data
+    cache: always

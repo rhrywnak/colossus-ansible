@@ -35,5 +35,4 @@ pihole_dns_records:
   - "10.10.100.55 semaphore.cogmai.com"
 
   # ── Monitoring ────────────────────────────────────────────
-  - "10.10.100.55 grafana.cogmai.com grafana"
-  - "10.10.100.56 monitoring.cogmai.com monitoring"
+  - "10.10.100.55 observe.cogmai.com observe"
