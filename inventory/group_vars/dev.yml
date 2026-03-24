@@ -16,8 +16,13 @@ colossus_legal_fastembed_cache_path: "/data/models"
 colossus_legal_anthropic_model: "claude-sonnet-4-6"
 colossus_legal_pg_url: "postgres://postgres:{{ vault_colossus_legal_pg_password_dev }}@10.10.100.200:5432/colossus_legal"
 
+# ── Colossus-Legal: Nginx Reverse Proxy ──────────────────────
+# Internal URL for frontend nginx to proxy /api/ requests to backend
+# Uses the host IP since frontend and backend are separate containers on same VM
+colossus_legal_backend_internal_url: "http://10.10.100.220:3403"
+
 # ── Colossus-Legal: Frontend ─────────────────────────────────
-# This is the runtime-injected API URL (not baked into the image)
-colossus_legal_api_url: "https://colossus-legal-api-dev.cogmai.com"
+# Empty string = same-origin (nginx reverse proxy handles /api/ routing)
+colossus_legal_api_url: ""
 colossus_legal_cors_origins: "https://colossus-legal-dev.cogmai.com,http://localhost:5473"
 colossus_legal_auth_logout_url: "https://auth.cogmai.com/application/o/colossus-services/end-session/?post_logout_redirect_uri=https://colossus-legal-dev.cogmai.com/"

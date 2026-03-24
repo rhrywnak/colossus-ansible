@@ -13,3 +13,7 @@ colossus_legal_documents_container_path: "/data/documents"
 # Models auto-download on first use (~270MB). Must be rw.
 colossus_legal_models_host_path: "/mnt/data/models"
 colossus_legal_models_container_path: "/data/models"
+
+# Internal backend URL for nginx reverse proxy
+# Override in group_vars/dev.yml and group_vars/prod.yml
+colossus_legal_backend_internal_url: "http://localhost:3403"
