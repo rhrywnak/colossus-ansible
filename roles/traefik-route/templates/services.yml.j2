@@ -180,6 +180,21 @@ http:
             sans:
               - "{{ traefik_domain }}"
 
+    # Static assets bypass for {{ route.name }}
+    # JavaScript workers (e.g., PDF.js) loaded via dynamic import cannot follow auth redirects
+    {{ route.name }}-assets:
+      rule: "Host(`{{ route.host }}`) && PathPrefix(`/assets/`)"
+      entryPoints:
+        - https
+      service: {{ route.service | default(route.name) }}
+      priority: 20
+      tls:
+        certResolver: {{ traefik_cert_resolver }}
+        domains:
+          - main: "*.{{ traefik_domain }}"
+            sans:
+              - "{{ traefik_domain }}"
+
 {% endif %}
 {% endfor %}
   # ==========================================================================
