@@ -7,6 +7,7 @@ server {
     index index.html;
 
     # Add .mjs MIME type for PDF.js worker (Vite-built ES module)
+    include /etc/nginx/mime.types;
     types {
         application/javascript mjs;
     }
