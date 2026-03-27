@@ -25,7 +25,13 @@
 # ── Set PostgreSQL URL ─────────────────────────────────────
 - name: "Set PostgreSQL URL"
   ansible.builtin.set_fact:
-    _pg_url: "{{ colossus_legal_pg_url }}"
+    _pg_url: "{{ colossus_legal_pg_url }}"  
+  no_log: true
+
+# ── Set Pipeline PostgreSQL URL ──────────────────────────────
+- name: "Set Pipeline PostgreSQL URL"
+  ansible.builtin.set_fact:
+    _pg_url_v2: "{{ colossus_legal_pg_url_v2 }}"
   no_log: true
 
 # ── Ensure storage directories exist ─────────────────────────
