@@ -104,7 +104,8 @@
 
 - name: Display Traefik version
   ansible.builtin.debug:
-    msg: "{{ traefik_version_check.stdout_lines | first }}"
+    msg: "{{ traefik_version_check.stdout_lines | first | default('unknown (check mode)') }}"
+  when: traefik_version_check.stdout_lines | default([]) | length > 0
 
 # ── Create directory structure ───────────────────────────────
 
@@ -226,7 +227,7 @@
   ansible.builtin.debug:
     msg: |
       Traefik installation complete:
-        Version:   {{ traefik_version_check.stdout_lines | first }}
+        Version:   {{ traefik_version_check.stdout_lines | first | default('unknown (check mode)') }}
         HTTP:      port 80 listening
         HTTPS:     port 443 listening
         Dashboard: http://{{ ansible_host }}:8080

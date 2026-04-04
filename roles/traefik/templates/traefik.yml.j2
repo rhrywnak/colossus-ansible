@@ -22,6 +22,11 @@ entryPoints:
     address: ":443"
     http:
       tls: {}
+    transport:
+      respondingTimeouts:
+        readTimeout: "{{ traefik_read_timeout | default('600s') }}"
+        writeTimeout: "{{ traefik_write_timeout | default('600s') }}"
+        idleTimeout: "{{ traefik_idle_timeout | default('180s') }}"
   metrics:
     address: ":8082"
 
