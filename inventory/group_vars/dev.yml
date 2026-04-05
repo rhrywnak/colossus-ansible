@@ -18,9 +18,9 @@ colossus_legal_pg_url: "postgres://postgres:{{ vault_colossus_legal_pg_password_
 colossus_legal_pg_url_v2: "postgres://postgres:{{ vault_colossus_legal_pg_password_dev }}@10.10.100.200:5432/colossus_legal_v2"
 
 # ── Colossus-Legal: Nginx Reverse Proxy ──────────────────────
-# Internal URL for frontend nginx to proxy /api/ requests to backend
+# Backend IP for frontend nginx to proxy /api/ requests to backend
 # Uses the host IP since frontend and backend are separate containers on same VM
-colossus_legal_backend_internal_url: "http://10.10.100.220:3403"
+colossus_legal_backend_ip: "10.10.100.220"
 
 # ── Colossus-Legal: Frontend ─────────────────────────────────
 # Empty string = same-origin (nginx reverse proxy handles /api/ routing)

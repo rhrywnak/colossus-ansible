@@ -17,7 +17,7 @@ colossus_legal_anthropic_model: "claude-sonnet-4-6"
 colossus_legal_pg_url: "postgres://postgres:{{ vault_colossus_legal_pg_password_prod }}@10.10.100.110:5432/colossus_legal"
 
 # ── Colossus-Legal: Nginx Reverse Proxy ──────────────────────
-colossus_legal_backend_internal_url: "http://10.10.100.120:3403"
+colossus_legal_backend_ip: "10.10.100.120"
 
 # ── Colossus-Legal: Frontend ─────────────────────────────────
 # Empty string = same-origin (nginx reverse proxy handles /api/ routing)

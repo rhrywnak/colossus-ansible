@@ -16,7 +16,7 @@ server {
     # Makes frontend and API same-origin from browser's perspective.
     # Eliminates cross-origin issues for PDF loading, cookies, etc.
     location /api/ {
-        proxy_pass {{ colossus_legal_backend_internal_url }};
+        proxy_pass http://{{ colossus_legal_backend_ip }}:{{ colossus_legal_backend_port }};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -25,10 +25,10 @@ server {
         # Pass through Authentik headers from Traefik
         proxy_pass_request_headers on;
 
-        # Timeouts — never hang indefinitely
+        # Timeouts — 600s to support long-running LLM API calls (extraction pipeline)
         proxy_connect_timeout 10s;
-        proxy_send_timeout 30s;
-        proxy_read_timeout 120s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
 
         # Support large PDF uploads (50MB max, matching backend limit)
         client_max_body_size 50m;
@@ -36,7 +36,7 @@ server {
 
     # Health endpoint (no /api prefix)
     location = /health {
-        proxy_pass {{ colossus_legal_backend_internal_url }};
+        proxy_pass http://{{ colossus_legal_backend_ip }}:{{ colossus_legal_backend_port }};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
