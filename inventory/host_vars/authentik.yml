@@ -61,3 +61,6 @@ authentik_users:
       - "admin"
       - "legal_editor"
       - "ai_user"
+
+# Beszel monitoring agent
+beszel_agent_token: "{{ vault_beszel_agent_token_authentik }}"

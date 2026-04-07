@@ -1,0 +1,3 @@
+---
+# Beszel monitoring agent
+beszel_agent_token: "{{ vault_beszel_agent_token_cloudflared }}"

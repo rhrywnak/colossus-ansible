@@ -94,3 +94,6 @@ traefik_routes:
     backend_url: "http://10.10.100.56:8090"
     external: false
     protected: true
+
+# Beszel monitoring agent
+beszel_agent_token: "{{ vault_beszel_agent_token_traefik }}"

@@ -1,0 +1,11 @@
+---
+# roles/beszel-agent/defaults/main.yml
+# Default variables for beszel-agent role
+
+beszel_agent_version: "0.18.7"
+beszel_agent_binary_path: "/opt/beszel-agent/beszel-agent"
+beszel_agent_port: 45876
+beszel_agent_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICQiHnili0JtTRvSugdtRl/om7r/TpclJ1H87bml44zk"
+beszel_hub_url: "http://10.10.100.56:8090"
+beszel_agent_user: "beszel"
+beszel_agent_download_url: "https://github.com/henrygd/beszel/releases/download/v{{ beszel_agent_version }}/beszel-agent_linux_amd64.tar.gz"

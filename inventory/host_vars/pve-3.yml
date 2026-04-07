@@ -11,3 +11,6 @@ zfs_replicate_datasets:
     remote: "pve-3/semaphore-sync"
   - local: "pbs-zfs/services/observe"
     remote: "pve-3/observe"
+
+# Beszel monitoring agent
+beszel_agent_token: "{{ vault_beszel_agent_token_pve3 }}"

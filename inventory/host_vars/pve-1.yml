@@ -12,3 +12,6 @@ zfs_replicate_datasets:
     remote: "pve-1/legal-docs"
   - local: "prod-zfs/models"
     remote: "pve-1/models"
+
+# Beszel monitoring agent
+beszel_agent_token: "{{ vault_beszel_agent_token_pve1 }}"

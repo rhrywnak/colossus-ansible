@@ -1,0 +1,29 @@
+---
+# playbooks/deploy-beszel-agent.yml
+#
+# Deploy Beszel monitoring agent to all managed hosts.
+#
+# Each host requires a unique beszel_agent_token defined in its
+# host_vars file (sourced from Ansible Vault).
+#
+# Usage:
+#   # Deploy to all hosts (default)
+#   ansible-playbook playbooks/deploy-beszel-agent.yml
+#
+#   # Deploy to a specific group
+#   ansible-playbook playbooks/deploy-beszel-agent.yml -l proxmox
+#   ansible-playbook playbooks/deploy-beszel-agent.yml -l infrastructure
+#
+#   # Deploy to a single host (for testing)
+#   ansible-playbook playbooks/deploy-beszel-agent.yml -l pihole
+#
+#   # Dry run
+#   ansible-playbook playbooks/deploy-beszel-agent.yml --check --diff
+
+- name: Deploy Beszel monitoring agent
+  hosts: all:!truenas:!observe
+  become: true
+  gather_facts: true
+
+  roles:
+    - beszel-agent
