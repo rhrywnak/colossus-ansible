@@ -29,7 +29,7 @@
 # Cargo fetches colossus-rs crates directly from GitHub during the build
 # (both repos are public).
 #
-# NOTE: --no-cache is used on all builds to prevent Podman from serving
+# NOTE: is used on all builds to prevent Podman from serving
 # stale layers. Without this, code changes may not appear in the image.
 
 set -euo pipefail
@@ -80,7 +80,7 @@ echo ""
 echo ""
 echo "== Building backend (--no-cache) =="
 podman build \
-    --no-cache \
+    \
     -f "${COLOSSUS_LEGAL_SRC}/backend/Dockerfile" \
     -t "${BACKEND_IMAGE}:${VERSION}" \
     -t "${BACKEND_IMAGE}:latest" \
@@ -99,7 +99,7 @@ echo "  ✓ ${BACKEND_IMAGE}:${VERSION}"
 echo ""
 echo "== Building frontend (--no-cache) =="
 podman build \
-    --no-cache \
+    \
     -f "${COLOSSUS_LEGAL_SRC}/frontend/Dockerfile" \
     -t "${FRONTEND_IMAGE}:${VERSION}" \
     -t "${FRONTEND_IMAGE}:latest" \
