@@ -3,6 +3,7 @@
 # Override in group_vars/dev.yml and group_vars/prod.yml
 
 colossus_legal_backend_port: 3403
+colossus_legal_restate_port: 9080
 colossus_legal_frontend_port: 5473
 
 # Document storage — virtiofs mount, legal PDF files

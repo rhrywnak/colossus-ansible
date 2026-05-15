@@ -43,4 +43,4 @@ restate_bifrost_record_cache_memory_size: "128 MiB"
 # on port 9080 once the Restate SDK is integrated in the Rust code).
 restate_ingress_url: "http://10.10.100.220:8080"
 restate_admin_url: "http://10.10.100.220:9070"
-restate_backend_callback_url: "http://10.10.100.220:9080/restate"
+restate_backend_callback_url: "http://10.10.100.220:{{ colossus_legal_restate_port }}/restate"

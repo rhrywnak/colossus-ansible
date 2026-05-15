@@ -41,4 +41,4 @@ restate_bifrost_record_cache_memory_size: "250 MiB"
 # Restate endpoint URLs for the colossus-legal backend on PROD app VM.
 restate_ingress_url: "http://10.10.100.120:8080"
 restate_admin_url: "http://10.10.100.120:9070"
-restate_backend_callback_url: "http://10.10.100.120:9080/restate"
+restate_backend_callback_url: "http://10.10.100.120:{{ colossus_legal_restate_port }}/restate"

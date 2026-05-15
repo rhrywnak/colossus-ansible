@@ -11,6 +11,7 @@ Requires=var-mnt-data-legal\x2ddocs.mount var-mnt-data-models.mount
 Image={{ container_registry }}/colossus-backend:{{ deploy_version }}
 ContainerName=colossus-backend
 PublishPort={{ colossus_legal_backend_port }}:3403
+PublishPort={{ colossus_legal_restate_port }}:9080
 EnvironmentFile={{ app_env_dir }}/colossus-legal-backend.env
 Volume={{ colossus_legal_documents_host_path }}:{{ colossus_legal_documents_container_path }}:rw
 Volume={{ colossus_legal_models_host_path }}:{{ colossus_legal_models_container_path }}:rw
