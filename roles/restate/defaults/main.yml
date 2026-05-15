@@ -1,0 +1,59 @@
+---
+# roles/restate/defaults/main.yml
+#
+# Default values for the Restate role.
+# Override per-environment in inventory/group_vars/{dev,prod}.yml
+
+# ── Container image ──────────────────────────────────────────
+# Restate publishes from their own registry, not Docker Hub or GHCR.
+# Always pin to a specific version — do not use :latest.
+# See https://github.com/restatedev/restate/releases for current stable.
+restate_image_registry: "docker.restate.dev/restatedev"
+restate_image_name: "restate"
+
+# ── Node identity ────────────────────────────────────────────
+# CRITICAL: Restate uses RESTATE_NODE_NAME to find its data directory
+# inside the volume. If this changes after first boot, Restate will
+# start with an empty data dir — effectively losing all workflow state.
+# Treat this as immutable per environment.
+# Reference: https://docs.restate.dev/server/deploy/docker#single-node-restate-server
+restate_node_name: "restate-1"
+
+# ── Cluster name (informational only for single-node) ────────
+restate_cluster_name: "colossus-restate"
+
+# ── Log level ────────────────────────────────────────────────
+# Format: <module>=<level>. Comma-separated for multiple modules.
+# Levels: error, warn, info, debug, trace
+restate_log_filter: "restate=info"
+
+# ── Memory configuration ─────────────────────────────────────
+# Defaults are sized for full production load (~3.25 GiB).
+# For DEV we tune down via env vars; PROD uses Restate's defaults.
+# Reference: https://docs.restate.dev/server/memory
+restate_rocksdb_total_memory_size: "2 GiB"
+restate_admin_query_engine_memory_size: "1 GiB"
+restate_bifrost_record_cache_memory_size: "250 MiB"
+
+# ── Ports (single-node defaults from Restate docs) ───────────
+# 8080 = Ingress (apps submit workflows here)
+# 9070 = Admin API + Web UI
+# 5122 = Fabric (node-to-node + Prometheus metrics)
+restate_ingress_port: 8080
+restate_admin_port: 9070
+restate_fabric_port: 5122
+
+# ── Data storage ─────────────────────────────────────────────
+# Phase A (current): Podman named volume on VM local disk.
+# Phase B (followup): virtiofs-backed ZFS dataset (see session
+# transition notes). Storage layout: named volume "restate-data"
+# is mounted into the container at /restate-data, which is
+# Restate's default data directory.
+restate_data_volume_name: "restate-data"
+restate_container_data_path: "/restate-data"
+
+# ── Telemetry ────────────────────────────────────────────────
+# Restate phones home anonymous usage telemetry by default.
+# Disable for our homelab.
+# Reference: https://docs.restate.dev/develop/local_dev/
+restate_disable_telemetry: true

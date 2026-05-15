@@ -1,0 +1,17 @@
+---
+# roles/restate/handlers/main.yml
+#
+# Handlers run when notified by tasks. The deploy-app role handles
+# the global systemd reload and container restart, but we keep a
+# role-local handler in case this role is ever invoked directly.
+
+- name: "Reload systemd daemon"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+
+- name: "Restart restate-server"
+  ansible.builtin.systemd:
+    name: restate-server.service
+    state: restarted
+  become: true

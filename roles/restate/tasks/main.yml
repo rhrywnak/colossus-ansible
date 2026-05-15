@@ -1,0 +1,25 @@
+---
+# roles/restate/tasks/main.yml
+#
+# Deploys Restate Server as a Quadlet container on the target host.
+#
+# Called by the deploy-app role during deployment.
+# The 'deploy_version' variable is set by the caller (deploy-app).
+
+# ── Write Quadlet container definition ───────────────────────
+# This is the canonical Restate container spec for Colossus.
+# Quadlet (Podman + systemd) reads .container files and generates
+# corresponding systemd unit files on daemon-reload.
+- name: "Write Restate Quadlet file"
+  ansible.builtin.template:
+    src: restate-server.container.j2
+    dest: "{{ quadlet_dir }}/restate-server.container"
+    mode: "0644"
+  notify:
+    - "Reload systemd daemon"
+    - "Restart restate-server"
+
+# Note: We deliberately do NOT create the Podman named volume here.
+# Podman auto-creates named volumes on first container run if they
+# don't exist, and Quadlet's Volume= directive handles this for us.
+# No 'containers.podman.podman_volume' task needed.

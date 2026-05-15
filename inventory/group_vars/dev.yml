@@ -28,3 +28,19 @@ colossus_legal_backend_ip: "10.10.100.220"
 colossus_legal_api_url: ""
 colossus_legal_cors_origins: "https://colossus-legal-dev.cogmai.com,http://localhost:5473"
 colossus_legal_auth_logout_url: "https://auth.cogmai.com/application/o/colossus-services/end-session/?post_logout_redirect_uri=https://colossus-legal-dev.cogmai.com/"
+
+# ── Restate (DEV sizing) ─────────────────────────────────────
+# Tuned down from production defaults to share VM-220 with backend+frontend.
+# Total Restate memory pool: ~1.4 GiB (vs ~3.25 GiB defaults).
+# Reference: https://docs.restate.dev/server/memory#container-and-kubernetes-deployments
+restate_rocksdb_total_memory_size: "1 GiB"
+restate_admin_query_engine_memory_size: "256 MiB"
+restate_bifrost_record_cache_memory_size: "128 MiB"
+
+# Restate endpoint URLs for the colossus-legal backend.
+# These are how the backend reaches Restate and how Restate calls
+# back into the backend's SDK endpoint (which the backend serves
+# on port 9080 once the Restate SDK is integrated in the Rust code).
+restate_ingress_url: "http://10.10.100.220:8080"
+restate_admin_url: "http://10.10.100.220:9070"
+restate_backend_callback_url: "http://10.10.100.220:9080/restate"

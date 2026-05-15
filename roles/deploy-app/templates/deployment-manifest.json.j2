@@ -9,7 +9,7 @@
   "target_ip": "{{ ansible_host }}",
   "images": {
 {% for container in app_def.containers %}
-    "{{ container.name }}": "{{ container_registry }}/{{ container.image_name }}:{{ manifest_version }}"{{ "," if not loop.last else "" }}
+    "{{ container.name }}": "{{ container.image_registry | default(container_registry) }}/{{ container.image_name }}:{{ manifest_version }}"{{ "," if not loop.last else "" }}
 {% endfor %}
   }
 }

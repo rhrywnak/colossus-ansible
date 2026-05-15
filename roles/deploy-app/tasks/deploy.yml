@@ -73,7 +73,7 @@
 
 - name: "Pull container images"
   containers.podman.podman_image:
-    name: "{{ container_registry }}/{{ item.image_name }}:{{ version }}"
+    name: "{{ item.image_registry | default(container_registry) }}/{{ item.image_name }}:{{ version }}"
     pull: true
     force: true
   loop: "{{ app_def.containers }}"

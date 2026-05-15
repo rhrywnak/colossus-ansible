@@ -83,3 +83,84 @@
     src: colossus-frontend.container.j2
     dest: "{{ quadlet_dir }}/colossus-frontend.container"
     mode: "0644"
+
+# ── Restate service deployment registration ──────────────────
+# After the backend container is up, register it with Restate so
+# Restate can call back into our service handlers.
+#
+# DEFERRED-READY DESIGN: These tasks skip cleanly if the backend
+# doesn't yet expose a /restate SDK endpoint. This is intentional —
+# the Rust backend code adds the SDK endpoint in a future release,
+# and we want this Ansible role to be ready for that promotion
+# without requiring a coordinated change.
+#
+# Idempotent: GET-then-conditionally-POST. We never use the `force`
+# flag, which the Restate docs say should never be used in production
+# (it can break in-flight invocations).
+
+- name: "Wait briefly for backend to be ready for Restate registration"
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:9080/restate/health"
+    method: GET
+    status_code: [200, 404]   # 404 is fine — means SDK not yet integrated
+    timeout: 5
+  register: backend_restate_endpoint
+  failed_when: false
+  changed_when: false
+
+- name: "Check Restate admin API reachability"
+  ansible.builtin.uri:
+    url: "{{ restate_admin_url }}/health"
+    method: GET
+    status_code: 200
+    timeout: 5
+  register: restate_admin_reachable
+  failed_when: false
+  changed_when: false
+  # Only check if backend exposes a Restate SDK endpoint
+  when: backend_restate_endpoint.status == 200
+
+- name: "List currently registered Restate deployments"
+  ansible.builtin.uri:
+    url: "{{ restate_admin_url }}/deployments"
+    method: GET
+    return_content: true
+    status_code: 200
+  register: restate_deployments
+  # Only list if Restate admin is reachable AND backend has SDK endpoint
+  when:
+    - backend_restate_endpoint.status == 200
+    - restate_admin_reachable.status == 200
+  changed_when: false
+
+- name: "Register backend deployment with Restate (idempotent)"
+  ansible.builtin.uri:
+    url: "{{ restate_admin_url }}/deployments"
+    method: POST
+    body_format: json
+    body:
+      uri: "{{ restate_backend_callback_url }}"
+    status_code: 201
+  when:
+    - backend_restate_endpoint.status == 200
+    - restate_admin_reachable.status == 200
+    - restate_deployments is defined
+    - restate_deployments.json is defined
+    - >-
+      (restate_deployments.json.deployments
+       | default(restate_deployments.json)
+       | selectattr('uri', 'equalto', restate_backend_callback_url)
+       | list | length) == 0
+
+- name: "Show Restate registration status"
+  ansible.builtin.debug:
+    msg: >-
+      {% if backend_restate_endpoint.status != 200 %}
+      Backend does not yet expose /restate endpoint — skipping registration.
+      This is expected until the Rust backend integrates the Restate SDK.
+      {% elif restate_admin_reachable.status != 200 %}
+      Backend has /restate endpoint but Restate admin API is not reachable
+      at {{ restate_admin_url }}. Check that the restate app is deployed.
+      {% else %}
+      Backend is registered with Restate at {{ restate_backend_callback_url }}.
+      {% endif %}

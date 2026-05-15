@@ -45,6 +45,21 @@ apps:
       - url: "http://{{ ansible_host }}:5473/"
         expect_status: 200
         description: "Frontend serves HTML"
+  restate:
+    role: restate
+    containers:
+      - name: restate-server
+        image_name: restate
+        # Override: Restate publishes to its own registry, not ghcr.io
+        image_registry: "docker.restate.dev/restatedev"
+        port: 9070   # admin port used for health-check addressing
+    health_checks:
+      - url: "http://{{ ansible_host }}:9070/health"
+        expect_status: 200
+        description: "Restate admin API health endpoint"
+      - url: "http://{{ ansible_host }}:8080/restate/health"
+        expect_status: 200
+        description: "Restate ingress health endpoint"
 
 # ── Network & Infrastructure ─────────────────────────────────
 domain: cogmai.com
