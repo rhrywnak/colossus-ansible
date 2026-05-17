@@ -34,7 +34,7 @@ colossus_legal_auth_logout_url: "https://auth.cogmai.com/application/o/colossus-
 # Capacity planning note: VM-120 should have at least 8 GiB total RAM
 # to comfortably host Restate + colossus-backend + colossus-frontend.
 # Check VM-120 sizing before first PROD Restate deploy.
-restate_rocksdb_total_memory_size: "2 GiB"
+restate_rocksdb_total_memory_size: "4 GiB"
 restate_admin_query_engine_memory_size: "1 GiB"
 restate_bifrost_record_cache_memory_size: "250 MiB"
 

@@ -32,9 +32,12 @@ Environment=RESTATE_CLUSTER_NAME={{ restate_cluster_name }}
 Environment=RESTATE_LOG_FILTER={{ restate_log_filter }}
 
 # Memory pools (see https://docs.restate.dev/server/memory)
-Environment=RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE={{ restate_rocksdb_total_memory_size }}
-Environment=RESTATE_ADMIN__QUERY_ENGINE__MEMORY_SIZE={{ restate_admin_query_engine_memory_size }}
-Environment=RESTATE_BIFROST__RECORD_CACHE_MEMORY_SIZE={{ restate_bifrost_record_cache_memory_size }}
+# NOTE: Values like "512 MiB" contain a space, so the entire VAR=value
+# assignment MUST be wrapped in double quotes — otherwise systemd parses
+# only the integer before the space and Restate sees a bare number.
+Environment="RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE={{ restate_rocksdb_total_memory_size }}"
+Environment="RESTATE_ADMIN__QUERY_ENGINE__MEMORY_SIZE={{ restate_admin_query_engine_memory_size }}"
+Environment="RESTATE_BIFROST__RECORD_CACHE_MEMORY_SIZE={{ restate_bifrost_record_cache_memory_size }}"
 
 # Telemetry opt-out
 {% if restate_disable_telemetry %}
