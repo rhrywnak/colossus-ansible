@@ -18,3 +18,9 @@ colossus_legal_models_container_path: "/data/models"
 # Backend IP for nginx reverse proxy — MUST be overridden per environment
 # Override in group_vars/dev.yml and group_vars/prod.yml
 colossus_legal_backend_ip: "127.0.0.1"
+
+# Restate admin API URL — used by the backend's dual-cancel handler to
+# cancel in-flight Restate workflow invocations. Read by AppConfig as
+# Option<String>; when absent, the Restate cancel path silently skips.
+# Defaults to the Restate admin port on the same host as the backend.
+colossus_legal_restate_admin_url: "http://{{ colossus_legal_backend_ip }}:9070"
