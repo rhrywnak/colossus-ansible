@@ -24,3 +24,21 @@ colossus_legal_backend_ip: "127.0.0.1"
 # Option<String>; when absent, the Restate cancel path silently skips.
 # Defaults to the Restate admin port on the same host as the backend.
 colossus_legal_restate_admin_url: "http://{{ colossus_legal_backend_ip }}:9070"
+
+# Restate ingress URL — backend submits new workflow invocations to this
+# endpoint (port 8080 on the Restate node). Defaults to the same host
+# as the backend.
+colossus_legal_restate_ingress_url: "http://{{ colossus_legal_backend_ip }}:8080"
+
+# Anthropic model used by the legacy RAG synthesis path AND the v2
+# pipeline (LLM_MODEL points at the same value). Override per
+# environment in group_vars/{dev,prod}.yml.
+colossus_legal_anthropic_model: "claude-opus-4-6"
+
+# Decomposer model — separate (typically cheaper/faster) model used to
+# break complex questions into sub-questions before retrieval.
+colossus_legal_decomposer_model: "claude-sonnet-4-6"
+
+# Filesystem path inside the container where prompt templates live.
+# Mounted from the documents virtiofs volume by convention.
+colossus_legal_prompts_dir: "/data/documents/prompts"
