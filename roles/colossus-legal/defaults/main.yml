@@ -42,3 +42,9 @@ colossus_legal_decomposer_model: "claude-sonnet-4-6"
 # Filesystem path inside the container where prompt templates live.
 # Mounted from the documents virtiofs volume by convention.
 colossus_legal_prompts_dir: "/data/documents/prompts"
+
+# Restate pipeline timeouts (seconds).
+# Inactivity: idle window before graceful cancellation is attempted.
+# Abort: hard ceiling after which Restate kills the invocation outright.
+colossus_legal_pipeline_inactivity_timeout_secs: 1800
+colossus_legal_pipeline_abort_timeout_secs: 2700
