@@ -99,16 +99,23 @@
 # (it can break in-flight invocations).
 
 - name: "Wait briefly for backend to be ready for Restate registration"
+  # The Restate Rust SDK serves the discovery manifest at the mount path
+  # itself (e.g. /restate), not under a /health sub-path. 200 here means
+  # the SDK is wired up; 404 means it isn't yet integrated.
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:9080/restate/health"
+    url: "http://{{ ansible_host }}:9080/restate"
     method: GET
     status_code: [200, 404]   # 404 is fine — means SDK not yet integrated
     timeout: 5
   register: backend_restate_endpoint
   failed_when: false
   changed_when: false
+  check_mode: false   # read-only probe — must run in check mode to gate downstream
 
 - name: "Check Restate admin API reachability"
+  # Probed independently of the backend SDK — the admin API is a
+  # separate service on a separate port. Tolerant probe so unconditional
+  # execution is safe even when Restate isn't deployed.
   ansible.builtin.uri:
     url: "{{ restate_admin_url }}/health"
     method: GET
@@ -117,8 +124,7 @@
   register: restate_admin_reachable
   failed_when: false
   changed_when: false
-  # Only check if backend exposes a Restate SDK endpoint
-  when: backend_restate_endpoint.status == 200
+  check_mode: false
 
 - name: "List currently registered Restate deployments"
   ansible.builtin.uri:
@@ -132,6 +138,7 @@
     - backend_restate_endpoint.status == 200
     - restate_admin_reachable.status == 200
   changed_when: false
+  check_mode: false
 
 - name: "Register backend deployment with Restate (idempotent)"
   ansible.builtin.uri:
@@ -141,6 +148,7 @@
     body:
       uri: "{{ restate_backend_callback_url }}"
     status_code: 201
+  register: restate_register_result
   when:
     - backend_restate_endpoint.status == 200
     - restate_admin_reachable.status == 200
@@ -153,7 +161,9 @@
        | list | length) == 0
 
 # The Restate SDK has no API for max_attempts; it must be set via
-# the admin API after service registration.
+# the admin API after service registration. This task is decoupled
+# from the backend SDK probe — it only needs the Restate admin API
+# and a successful (or already-completed) registration.
 - name: "Set max_attempts=2 on DocumentPipeline service"
   ansible.builtin.uri:
     url: "{{ restate_admin_url }}/services/DocumentPipeline"
@@ -164,8 +174,8 @@
         max_attempts: 2
     status_code: 200
   when:
-    - backend_restate_endpoint.status == 200
-    - restate_admin_reachable.status == 200
+    - (restate_admin_reachable.status | default(0)) == 200
+    - restate_register_result is succeeded
 
 - name: "Show Restate registration status"
   ansible.builtin.debug:
