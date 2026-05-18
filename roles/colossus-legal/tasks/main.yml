@@ -152,6 +152,21 @@
        | selectattr('uri', 'equalto', restate_backend_callback_url)
        | list | length) == 0
 
+# The Restate SDK has no API for max_attempts; it must be set via
+# the admin API after service registration.
+- name: "Set max_attempts=2 on DocumentPipeline service"
+  ansible.builtin.uri:
+    url: "{{ restate_admin_url }}/services/DocumentPipeline"
+    method: PATCH
+    body_format: json
+    body:
+      retry_policy:
+        max_attempts: 2
+    status_code: 200
+  when:
+    - backend_restate_endpoint.status == 200
+    - restate_admin_reachable.status == 200
+
 - name: "Show Restate registration status"
   ansible.builtin.debug:
     msg: >-
