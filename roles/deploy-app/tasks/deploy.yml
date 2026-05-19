@@ -125,6 +125,18 @@
 - name: "Run health checks"
   ansible.builtin.include_tasks: validate.yml
 
+# ── Step 6.5: App-specific post-deploy hook ──────────────────
+# Apps that need post-restart finalisation (e.g. Restate admin-API
+# overrides that re-discovery would wipe) opt in by setting
+# `post_deploy: true` on their entry in the `apps` dict. Their role
+# must then provide a `post_deploy.yml` tasks file.
+
+- name: "Run app-specific post-deploy hook ({{ app_def.role }})"
+  ansible.builtin.include_role:
+    name: "{{ app_def.role }}"
+    tasks_from: post_deploy.yml
+  when: app_def.post_deploy | default(false)
+
 # ── Step 7: Write deployment manifest ────────────────────────
 
 - name: "Write deployment manifest"
