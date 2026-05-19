@@ -39,6 +39,23 @@ Environment="RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE={{ restate_rocksdb_total_memory_s
 Environment="RESTATE_ADMIN__QUERY_ENGINE__MEMORY_SIZE={{ restate_admin_query_engine_memory_size }}"
 Environment="RESTATE_BIFROST__RECORD_CACHE_MEMORY_SIZE={{ restate_bifrost_record_cache_memory_size }}"
 
+# Server-wide default retry policy. Equivalent TOML:
+#   [invocation.default-retry-policy]
+#   initial-interval = "500ms"
+#   exponentiation-factor = 2.0
+#   max-attempts = 2
+#   max-interval = "1m"
+#   on-max-attempts = "kill"
+# on-max-attempts = "kill" terminates exhausted invocations instead of
+# the default "pause" — paused invocations sit forever and confuse
+# operators. The per-service admin-API PATCH approach was abandoned
+# because it gets wiped on every new service revision.
+Environment=RESTATE_DEFAULT_RETRY_POLICY__INITIAL_INTERVAL=500ms
+Environment=RESTATE_DEFAULT_RETRY_POLICY__EXPONENTIATION_FACTOR=2.0
+Environment=RESTATE_DEFAULT_RETRY_POLICY__MAX_ATTEMPTS=2
+Environment=RESTATE_DEFAULT_RETRY_POLICY__MAX_INTERVAL=1m
+Environment=RESTATE_DEFAULT_RETRY_POLICY__ON_MAX_ATTEMPTS=kill
+
 # Telemetry opt-out
 {% if restate_disable_telemetry %}
 Environment=DO_NOT_TRACK=1
