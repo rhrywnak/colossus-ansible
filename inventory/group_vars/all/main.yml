@@ -34,7 +34,7 @@ apps:
     # Run the role's post_deploy.yml task file after container restart +
     # health checks. Used for finalisation that must happen post-restart
     # (e.g. Restate admin-API overrides that are wiped on re-discovery).
-    post_deploy: true
+    post_deploy: false
     containers:
       - name: colossus-backend
         image_name: colossus-backend
