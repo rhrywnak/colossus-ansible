@@ -57,6 +57,13 @@ server {
         add_header Expires "0";
     }
 
+    # Theme overrides — must not be cached (operators edit to change colors without rebuilding)
+    location = /theme-overrides.css {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+
     # Cache static assets aggressively (hashed filenames from Vite)
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|mjs)$ {
         expires 1y;
