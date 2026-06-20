@@ -1,0 +1,13 @@
+---
+# build-vm role defaults  (STUB — to be fleshed out after VM 230 exists)
+#
+# Installs the build toolchain layer over SSH onto colossus-build1, on top of
+# the minimal Fedora base that cloud-init produced.
+
+# Pinned Rust toolchain — leave "" until confirmed, then set for build parity.
+# REFERENCE: colossus-legal/backend/Dockerfile pins `--default-toolchain 1.88.0`.
+# (Confirm with Roman before hardcoding — see TODO in tasks/main.yml.)
+vm_build_rust_version: ""
+
+# Node + container tooling versions (TODO: decide nodejs package vs mise).
+vm_build_node_version: ""

@@ -5,7 +5,14 @@
 # ── VM identity ──────────────────────────────────────────────
 # vm_id:          (required) Proxmox VMID
 # vm_name:        (required) VM hostname
-# vm_ignition:    (required) Ignition filename in snippets dir
+# vm_ignition:    (required when vm_provision == "coreos") Ignition filename in snippets dir
+# vm_cloudinit_userdata: (required when vm_provision == "fedora") cloud-init user-data filename in snippets dir
+
+# ── Provisioning mode ────────────────────────────────────────
+# coreos (default): Fedora CoreOS via Ignition (cicustom vendor= slot)
+# fedora:           Fedora Server via cloud-init user-data (cicustom user= slot)
+# Existing CoreOS VMs are unaffected — leave this unset to keep coreos behavior.
+vm_provision: coreos
 
 # ── Hardware ─────────────────────────────────────────────────
 vm_cores: 4
@@ -15,12 +22,34 @@ vm_machine: q35
 vm_bridge: vmbr0
 vm_scsihw: virtio-scsi-pci
 
+# Relative CPU weight under contention (Proxmox cpuunits, default 100).
+# Lower yields to higher-weighted VMs. Left at 100 → task is skipped, so
+# existing VMs are never touched.
+vm_cpuunits: 100
+
 # ── Storage ──────────────────────────────────────────────────
 vm_storage: local-lvm
 vm_coreos_store_id: coreos
 vm_coreos_store_path: /var/coreos
 vm_coreos_snippets_dir: "{{ vm_coreos_store_path }}/snippets"
 vm_coreos_images_dir: "{{ vm_coreos_store_path }}/images"
+
+# ── Fedora cloud-init (vm_provision == "fedora") ─────────────
+# cloud-init user-data filename, placed in the same snippets dir as ignition.
+vm_cloudinit_userdata: ""
+# Static networking, applied via Proxmox-native cloud-init (ipconfig0 +
+# nameserver). All three required when vm_provision == "fedora". CoreOS
+# ignores these — Ignition owns its own network.
+vm_ip: ""          # e.g. "10.10.100.230/24"
+vm_gateway: ""     # e.g. "10.10.100.1"
+vm_nameserver: ""  # e.g. "10.10.100.53"
+# Reuse the same images dir as CoreOS for now (moves to pve-4 later).
+vm_fedora_images_dir: "{{ vm_coreos_images_dir }}"
+# NOTE: Fedora 44 renamed its cloud image — there is NO "Fedora-Server-KVM-*".
+# The real cloud-init qcow2 is "Fedora-Server-Guest-Generic-44-1.7.x86_64.qcow2".
+# This default glob is kept per spec; override in the per-VM vars file (or here)
+# to match the file actually downloaded. See the image-not-found fail message.
+vm_fedora_image_glob: "Fedora-Server-KVM-*.x86_64.qcow2"
 
 # ── virtiofs shares (optional) ───────────────────────────────
 # List of dicts: [{dirid: "prod-db-postgres", cache: "always"}, ...]

@@ -1,0 +1,55 @@
+---
+# build-vm/tasks/main.yml
+#
+# STUB — scaffold only. Installs the build toolchain layer over SSH onto
+# colossus-build1 (VMID 230) AFTER first boot. Intentionally not fleshed out
+# yet; we fill this in once the VM exists and the Rust/Node versions are
+# confirmed. Each task below is a clearly-marked TODO placeholder.
+#
+# Runs as the `core` operator user (sudo NOPASSWD) created by cloud-init.
+
+# ── Build dependencies (system packages) ─────────────────────
+- name: "TODO: install build dependencies"
+  ansible.builtin.debug:
+    msg: >-
+      TODO: dnf install gcc make pkgconf openssl-devel (plus perl, clang as
+      needed for ring/aws-lc-sys). Implement with ansible.builtin.dnf.
+  # - name: "Install build deps"
+  #   become: true
+  #   ansible.builtin.dnf:
+  #     name: [gcc, make, pkgconf, openssl-devel]
+  #     state: present
+
+# ── Rust toolchain (rustup + pinned version) ─────────────────
+- name: "TODO: install rustup + pinned Rust toolchain"
+  ansible.builtin.debug:
+    msg: >-
+      TODO: install rustup, then `rustup toolchain install {{ vm_build_rust_version | default('<PIN>') }}`
+      and set as default. PIN to match build parity with colossus-legal —
+      backend/Dockerfile uses 1.88.0 (CONFIRM with Roman before hardcoding).
+  # - name: "Install rustup (rootless, per-user)"
+  #   ansible.builtin.shell: |
+  #     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+  #       | sh -s -- -y --default-toolchain {{ vm_build_rust_version }}
+  #   args:
+  #     creates: "{{ ansible_env.HOME }}/.rustup"
+  #   when: vm_build_rust_version | length > 0
+
+# ── Node.js ──────────────────────────────────────────────────
+- name: "TODO: install Node.js"
+  ansible.builtin.debug:
+    msg: >-
+      TODO: decide install path — distro `nodejs` package (simple, older) vs
+      `mise` (version-pinned, matches frontend build). Implement once chosen.
+
+# ── Container build tooling (podman + buildah) ───────────────
+- name: "TODO: install podman + buildah"
+  ansible.builtin.debug:
+    msg: >-
+      TODO: dnf install podman buildah; configure rootless for the `core` user
+      (subuid/subgid). Needed for build-release.sh container builds.
+  # - name: "Install podman + buildah"
+  #   become: true
+  #   ansible.builtin.dnf:
+  #     name: [podman, buildah]
+  #     state: present

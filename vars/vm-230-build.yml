@@ -1,0 +1,30 @@
+---
+# VM-230: Build host (pve-1, temporary bridge — moves to pve-4 later)
+# Fedora Server 44 via cloud-init (vm_provision: fedora).
+# Usage: ansible-playbook playbooks/create-vm.yml -l pve-1 -e @vars/vm-230-build.yml
+#
+# PRE-REQS (run on pve-1 first — virtiofs is NOT hot-pluggable):
+#   scripts/create-build-vm-datasets.sh   (ZFS datasets + dir mappings)
+#   user-data copied to /var/coreos/snippets/colossus-build1-user-data.yaml
+
+vm_id: 230
+vm_name: colossus-build1
+vm_provision: fedora
+vm_cloudinit_userdata: colossus-build1-user-data.yaml
+
+# Static networking, applied via Proxmox-native cloud-init (ipconfig0 + nameserver).
+vm_ip: "10.10.100.230/24"
+vm_gateway: "10.10.100.1"
+vm_nameserver: "10.10.100.53"
+vm_cores: 8
+vm_memory: 32768
+vm_cpuunits: 50
+vm_disk_grow: "+120G"
+
+# Override the role's generic default glob with the real Fedora 44 cloud image
+# name (Fedora 44 renamed it — there is no "Fedora-Server-KVM-*").
+vm_fedora_image_glob: "Fedora-Server-Guest-Generic-44-*.x86_64.qcow2"
+
+vm_virtiofs_shares:
+  - { dirid: "build-cache",   cache: "always" }
+  - { dirid: "build-scratch", cache: "always" }

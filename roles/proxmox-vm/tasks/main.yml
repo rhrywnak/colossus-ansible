@@ -1,13 +1,16 @@
 ---
 # proxmox-vm/tasks/main.yml
 #
-# Creates a Fedora CoreOS VM on a Proxmox host.
+# Creates a Proxmox VM on a Proxmox host. Two provisioning modes:
+#   - coreos (default): Fedora CoreOS via Ignition (cicustom vendor= slot)
+#   - fedora:           Fedora Server via cloud-init user-data (cicustom user= slot)
 # Idempotent: skips entirely if the VMID already exists.
 #
 # Required variables:
-#   vm_id:        Proxmox VMID (e.g., 110)
-#   vm_name:      VM hostname (e.g., colossus-prod-db1)
-#   vm_ignition:  Ignition filename (e.g., colossus-prod-db1.ign)
+#   vm_id:                  Proxmox VMID (e.g., 110)
+#   vm_name:                VM hostname (e.g., colossus-prod-db1)
+#   vm_ignition:            Ignition filename — required when vm_provision == "coreos"
+#   vm_cloudinit_userdata:  cloud-init user-data filename — required when vm_provision == "fedora"
 
 # ── Validate required variables ──────────────────────────────
 
@@ -16,8 +19,17 @@
     that:
       - vm_id is defined
       - vm_name is defined
-      - vm_ignition is defined
-    fail_msg: "Required: vm_id, vm_name, vm_ignition"
+      # Ignition required only for the CoreOS path …
+      - (vm_provision != "coreos") or (vm_ignition is defined)
+      # … cloud-init user-data + static network required only for the Fedora path.
+      - (vm_provision != "fedora") or (vm_cloudinit_userdata is defined and vm_cloudinit_userdata | length > 0)
+      - (vm_provision != "fedora") or (vm_ip | length > 0)
+      - (vm_provision != "fedora") or (vm_gateway | length > 0)
+      - (vm_provision != "fedora") or (vm_nameserver | length > 0)
+    fail_msg: >-
+      Required: vm_id, vm_name, and either vm_ignition (vm_provision=coreos)
+      or vm_cloudinit_userdata + vm_ip + vm_gateway + vm_nameserver
+      (vm_provision=fedora).
     quiet: true
 
 # ── Check if VM already exists (idempotency) ────────────────
@@ -42,11 +54,14 @@
 
     # ── Pre-flight checks ────────────────────────────────────
 
+    # ── CoreOS image discovery (vm_provision == "coreos") ────
+
     - name: "Find CoreOS QCOW2 image"
       ansible.builtin.find:
         paths: "{{ vm_coreos_images_dir }}"
         patterns: "fedora-coreos-*-proxmoxve.x86_64.qcow2"
       register: coreos_images
+      when: vm_provision == "coreos"
 
     - name: "Fail if no CoreOS image found"
       ansible.builtin.fail:
@@ -55,16 +70,51 @@
           Download one first:
             podman run --pull=always --rm -v '{{ vm_coreos_images_dir }}:/data' -w /data
             quay.io/coreos/coreos-installer:release download -s stable -p proxmoxve -f qcow2.xz --decompress
-      when: coreos_images.files | length == 0
+      when:
+        - vm_provision == "coreos"
+        - coreos_images.files | length == 0
 
     - name: "Set CoreOS image path (latest version)"
       ansible.builtin.set_fact:
-        vm_coreos_qcow: "{{ (coreos_images.files | sort(attribute='path') | last).path }}"
+        vm_image_qcow: "{{ (coreos_images.files | sort(attribute='path') | last).path }}"
+      when: vm_provision == "coreos"
+
+    # ── Fedora cloud image discovery (vm_provision == "fedora") ──
+
+    - name: "Find Fedora QCOW2 image"
+      ansible.builtin.find:
+        paths: "{{ vm_fedora_images_dir }}"
+        patterns: "{{ vm_fedora_image_glob }}"
+      register: fedora_images
+      when: vm_provision == "fedora"
+
+    - name: "Fail if no Fedora image found"
+      ansible.builtin.fail:
+        msg: >
+          No Fedora cloud QCOW2 image matching '{{ vm_fedora_image_glob }}'
+          found in {{ vm_fedora_images_dir }}.
+          NOTE: Fedora 44 renamed its cloud image — there is no "Fedora-Server-KVM-*".
+          Fetch the Fedora Server 44 cloud (Guest Generic) qcow2 first:
+            curl -L -o {{ vm_fedora_images_dir }}/Fedora-Server-Guest-Generic-44-1.7.x86_64.qcow2 \
+              https://download.fedoraproject.org/pub/fedora/linux/releases/44/Server/x86_64/images/Fedora-Server-Guest-Generic-44-1.7.x86_64.qcow2
+          Then set vm_fedora_image_glob to match the downloaded filename
+          (e.g. "Fedora-Server-Guest-Generic-44-*.x86_64.qcow2").
+      when:
+        - vm_provision == "fedora"
+        - fedora_images.files | length == 0
+
+    - name: "Set Fedora image path (latest version)"
+      ansible.builtin.set_fact:
+        vm_image_qcow: "{{ (fedora_images.files | sort(attribute='path') | last).path }}"
+      when: vm_provision == "fedora"
+
+    # ── Ignition presence check (CoreOS only) ────────────────
 
     - name: "Verify Ignition file exists"
       ansible.builtin.stat:
         path: "{{ vm_coreos_snippets_dir }}/{{ vm_ignition }}"
       register: ign_file
+      when: vm_provision == "coreos"
 
     - name: "Fail if Ignition file missing"
       ansible.builtin.fail:
@@ -72,7 +122,27 @@
           Ignition file not found: {{ vm_coreos_snippets_dir }}/{{ vm_ignition }}.
           Transpile the Butane config and copy it first:
             scp {{ vm_ignition }} root@{{ inventory_hostname }}:{{ vm_coreos_snippets_dir }}/
-      when: not ign_file.stat.exists
+      when:
+        - vm_provision == "coreos"
+        - not ign_file.stat.exists
+
+    # ── cloud-init user-data presence check (Fedora only) ────
+
+    - name: "Verify cloud-init user-data file exists"
+      ansible.builtin.stat:
+        path: "{{ vm_coreos_snippets_dir }}/{{ vm_cloudinit_userdata }}"
+      register: userdata_file
+      when: vm_provision == "fedora"
+
+    - name: "Fail if cloud-init user-data file missing"
+      ansible.builtin.fail:
+        msg: >
+          cloud-init user-data not found: {{ vm_coreos_snippets_dir }}/{{ vm_cloudinit_userdata }}.
+          Copy it into the snippets dir first:
+            scp {{ vm_cloudinit_userdata }} root@{{ inventory_hostname }}:{{ vm_coreos_snippets_dir }}/
+      when:
+        - vm_provision == "fedora"
+        - not userdata_file.stat.exists
 
     - name: "Ensure Proxmox coreos storage exists"
       ansible.builtin.command:
@@ -108,9 +178,9 @@
           --net0 "virtio,bridge={{ vm_bridge }}"
           --scsihw {{ vm_scsihw }}
 
-    - name: "Import CoreOS disk"
+    - name: "Import VM disk"
       ansible.builtin.command:
-        cmd: "qm set {{ vm_id }} --scsi0 {{ vm_storage }}:0,import-from={{ vm_coreos_qcow }}"
+        cmd: "qm set {{ vm_id }} --scsi0 {{ vm_storage }}:0,import-from={{ vm_image_qcow }}"
 
     - name: "Grow disk by {{ vm_disk_grow }}"
       ansible.builtin.command:
@@ -128,13 +198,40 @@
       ansible.builtin.command:
         cmd: "qm set {{ vm_id }} --serial0 socket --vga serial0"
 
+    # CoreOS consumes Ignition through the cloud-init *vendor* slot.
     - name: "Configure Ignition via cloud-init vendor snippet"
       ansible.builtin.command:
         cmd: "qm set {{ vm_id }} --cicustom vendor={{ vm_coreos_store_id }}:snippets/{{ vm_ignition }}"
+      when: vm_provision == "coreos"
 
+    # Fedora consumes cloud-init through the *user* slot (user-data file).
+    - name: "Configure cloud-init via user-data snippet"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --cicustom user={{ vm_coreos_store_id }}:snippets/{{ vm_cloudinit_userdata }}"
+      when: vm_provision == "fedora"
+
+    # Fedora networking is Proxmox-native: cloud-init writes it into the
+    # network-config and applies it at the correct pre-NetworkManager stage.
+    # (CoreOS sets no ipconfig — Ignition owns its network.)
+    - name: "Set static network (fedora cloud-init)"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --ipconfig0 ip={{ vm_ip }},gw={{ vm_gateway }} --nameserver {{ vm_nameserver }}"
+      when: vm_provision == "fedora"
+
+    # Disable Proxmox cloud-init's package-upgrade-on-first-boot. For CoreOS
+    # this is a long-standing default; for Fedora the user-data file owns
+    # user + keys (networking is set via ipconfig0 above), so we only need to
+    # suppress the auto-upgrade.
     - name: "Disable cloud-init auto-upgrade"
       ansible.builtin.command:
         cmd: "qm set {{ vm_id }} --ciupgrade 0"
+
+    # Relative CPU scheduling weight. Left at the default (100) → skipped, so
+    # existing VMs are never reconfigured. Applies to both provision types.
+    - name: "Set CPU scheduling weight (cpuunits)"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --cpuunits {{ vm_cpuunits }}"
+      when: vm_cpuunits != 100
 
     # ── Attach virtiofs shares (if any) ──────────────────────
 
@@ -159,7 +256,7 @@
     - name: "VM creation complete"
       ansible.builtin.debug:
         msg: >-
-          VM {{ vm_id }} ({{ vm_name }}) created.
+          VM {{ vm_id }} ({{ vm_name }}) created [{{ vm_provision }}].
           Cores: {{ vm_cores }}, Memory: {{ vm_memory }}MB,
           virtiofs: {{ vm_virtiofs_shares | length }} shares.
           {% if not vm_auto_start %}Start with: qm start {{ vm_id }}{% endif %}
