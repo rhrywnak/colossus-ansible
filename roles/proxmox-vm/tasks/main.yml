@@ -3,14 +3,16 @@
 #
 # Creates a Proxmox VM on a Proxmox host. Two provisioning modes:
 #   - coreos (default): Fedora CoreOS via Ignition (cicustom vendor= slot)
-#   - fedora:           Fedora Server via cloud-init user-data (cicustom user= slot)
+#   - fedora:           Fedora Server via cloud-init VENDOR-data + native flags
 # Idempotent: skips entirely if the VMID already exists.
 #
 # Required variables:
-#   vm_id:                  Proxmox VMID (e.g., 110)
-#   vm_name:                VM hostname (e.g., colossus-prod-db1)
-#   vm_ignition:            Ignition filename — required when vm_provision == "coreos"
-#   vm_cloudinit_userdata:  cloud-init user-data filename — required when vm_provision == "fedora"
+#   vm_id:                     Proxmox VMID (e.g., 110)
+#   vm_name:                   VM hostname (e.g., colossus-prod-db1)
+#   vm_ignition:               Ignition filename — required when vm_provision == "coreos"
+#   vm_cloudinit_vendordata:   vendor-data filename — required when vm_provision == "fedora"
+#   vm_ciuser / vm_sshkeys_file / vm_ip / vm_gateway / vm_nameserver
+#                              — also required when vm_provision == "fedora"
 
 # ── Validate required variables ──────────────────────────────
 
@@ -21,15 +23,17 @@
       - vm_name is defined
       # Ignition required only for the CoreOS path …
       - (vm_provision != "coreos") or (vm_ignition is defined)
-      # … cloud-init user-data + static network required only for the Fedora path.
-      - (vm_provision != "fedora") or (vm_cloudinit_userdata is defined and vm_cloudinit_userdata | length > 0)
+      # … vendor-data + identity + static network required only for the Fedora path.
+      - (vm_provision != "fedora") or (vm_cloudinit_vendordata is defined and vm_cloudinit_vendordata | length > 0)
+      - (vm_provision != "fedora") or (vm_ciuser | length > 0)
+      - (vm_provision != "fedora") or (vm_sshkeys_file | length > 0)
       - (vm_provision != "fedora") or (vm_ip | length > 0)
       - (vm_provision != "fedora") or (vm_gateway | length > 0)
       - (vm_provision != "fedora") or (vm_nameserver | length > 0)
     fail_msg: >-
       Required: vm_id, vm_name, and either vm_ignition (vm_provision=coreos)
-      or vm_cloudinit_userdata + vm_ip + vm_gateway + vm_nameserver
-      (vm_provision=fedora).
+      or vm_cloudinit_vendordata + vm_ciuser + vm_sshkeys_file + vm_ip
+      + vm_gateway + vm_nameserver (vm_provision=fedora).
     quiet: true
 
 # ── Check if VM already exists (idempotency) ────────────────
@@ -126,23 +130,23 @@
         - vm_provision == "coreos"
         - not ign_file.stat.exists
 
-    # ── cloud-init user-data presence check (Fedora only) ────
+    # ── cloud-init vendor-data presence check (Fedora only) ──
 
-    - name: "Verify cloud-init user-data file exists"
+    - name: "Verify cloud-init vendor-data file exists"
       ansible.builtin.stat:
-        path: "{{ vm_coreos_snippets_dir }}/{{ vm_cloudinit_userdata }}"
-      register: userdata_file
+        path: "{{ vm_coreos_snippets_dir }}/{{ vm_cloudinit_vendordata }}"
+      register: vendordata_file
       when: vm_provision == "fedora"
 
-    - name: "Fail if cloud-init user-data file missing"
+    - name: "Fail if cloud-init vendor-data file missing"
       ansible.builtin.fail:
         msg: >
-          cloud-init user-data not found: {{ vm_coreos_snippets_dir }}/{{ vm_cloudinit_userdata }}.
+          cloud-init vendor-data not found: {{ vm_coreos_snippets_dir }}/{{ vm_cloudinit_vendordata }}.
           Copy it into the snippets dir first:
-            scp {{ vm_cloudinit_userdata }} root@{{ inventory_hostname }}:{{ vm_coreos_snippets_dir }}/
+            scp {{ vm_cloudinit_vendordata }} root@{{ inventory_hostname }}:{{ vm_coreos_snippets_dir }}/
       when:
         - vm_provision == "fedora"
-        - not userdata_file.stat.exists
+        - not vendordata_file.stat.exists
 
     - name: "Ensure Proxmox coreos storage exists"
       ansible.builtin.command:
@@ -198,16 +202,40 @@
       ansible.builtin.command:
         cmd: "qm set {{ vm_id }} --serial0 socket --vga serial0"
 
+    # Adds the virtio-serial guest-agent device. Without it, qemu-guest-agent
+    # cannot start inside the guest. Opt-in (default off) so existing CoreOS
+    # VMs that never set vm_agent_enabled are unaffected.
+    - name: "Enable QEMU guest agent"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --agent enabled=1"
+      when: vm_agent_enabled | bool
+
     # CoreOS consumes Ignition through the cloud-init *vendor* slot.
     - name: "Configure Ignition via cloud-init vendor snippet"
       ansible.builtin.command:
         cmd: "qm set {{ vm_id }} --cicustom vendor={{ vm_coreos_store_id }}:snippets/{{ vm_ignition }}"
       when: vm_provision == "coreos"
 
-    # Fedora consumes cloud-init through the *user* slot (user-data file).
-    - name: "Configure cloud-init via user-data snippet"
+    # Fedora consumes our customisations through the *vendor* slot. The user
+    # slot is intentionally avoided: --cicustom user= makes Proxmox stop
+    # generating hostname + network, leaving the VM as "localhost" with no net.
+    - name: "Configure cloud-init via vendor-data snippet"
       ansible.builtin.command:
-        cmd: "qm set {{ vm_id }} --cicustom user={{ vm_coreos_store_id }}:snippets/{{ vm_cloudinit_userdata }}"
+        cmd: "qm set {{ vm_id }} --cicustom vendor={{ vm_coreos_store_id }}:snippets/{{ vm_cloudinit_vendordata }}"
+      when: vm_provision == "fedora"
+
+    # Identity is Proxmox-native (vendor-data ignores the users: block). Stage
+    # the repo's authorized-keys file onto the host, then point --sshkeys at it.
+    - name: "Copy SSH authorized-keys file to host snippets dir"
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../cloud-init/{{ vm_sshkeys_file }}"
+        dest: "{{ vm_coreos_snippets_dir }}/{{ vm_sshkeys_file }}"
+        mode: "0644"
+      when: vm_provision == "fedora"
+
+    - name: "Set cloud-init user + SSH keys (fedora)"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --ciuser {{ vm_ciuser }} --sshkeys {{ vm_coreos_snippets_dir }}/{{ vm_sshkeys_file }}"
       when: vm_provision == "fedora"
 
     # Fedora networking is Proxmox-native: cloud-init writes it into the
@@ -219,9 +247,9 @@
       when: vm_provision == "fedora"
 
     # Disable Proxmox cloud-init's package-upgrade-on-first-boot. For CoreOS
-    # this is a long-standing default; for Fedora the user-data file owns
-    # user + keys (networking is set via ipconfig0 above), so we only need to
-    # suppress the auto-upgrade.
+    # this is a long-standing default; for Fedora user/keys/network are set via
+    # native flags above and vendor-data carries packages/disk, so we only need
+    # to suppress the auto-upgrade.
     - name: "Disable cloud-init auto-upgrade"
       ansible.builtin.command:
         cmd: "qm set {{ vm_id }} --ciupgrade 0"

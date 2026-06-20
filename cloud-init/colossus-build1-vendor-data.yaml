@@ -1,0 +1,44 @@
+#cloud-config
+# =============================================================================
+# VM-230: colossus-build1 — Fedora Server 44 build host
+# cloud-init VENDOR-data (consumed via Proxmox: qm set --cicustom vendor=...)
+# Node: pve-1 (temporary) | IP: 10.10.100.230/24
+#
+# WHY VENDOR-DATA (not user-data):
+#   Supplying custom *user*-data via `--cicustom user=` makes Proxmox stop
+#   generating hostname + network config (VM stays "localhost" with no net).
+#   The documented fix is to use the *vendor* slot for our customisations and
+#   let Proxmox own the identity bits natively:
+#     - user + SSH keys → qm set --ciuser / --sshkeys   (vendor-data ignores
+#       the `users:` block, so it is NOT defined here)
+#     - hostname        → Proxmox passes the VM name through (no hostname: here)
+#     - network         → qm set --ipconfig0 / --nameserver
+#   This file therefore carries ONLY package/disk/runcmd customisations.
+#
+# MINIMAL on purpose: brings the box to a reachable, SSH-able state. The build
+# toolchain (Rust, Node, podman/buildah) is layered on later by the `build-vm`
+# Ansible role over SSH — NOT here.
+#
+# DEPLOY (copy into the Proxmox snippets dir on pve-1):
+#   scp cloud-init/colossus-build1-vendor-data.yaml \
+#       root@10.10.100.3:/var/coreos/snippets/colossus-build1-vendor-data.yaml
+# =============================================================================
+
+ssh_pwauth: false
+
+packages:
+  - qemu-guest-agent
+  - git
+
+# Expand the root partition + filesystem to fill the disk Proxmox grew by
+# vm_disk_grow (+120G). Proxmox grows the block device only — growpart/resizefs
+# extend the partition and FS inside the guest. The Guest-Generic image usually
+# enables this by default; make it explicit so a large disk can't end up with a
+# tiny root.
+growpart:
+  mode: auto
+  devices: ["/"]
+resize_rootfs: true
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent

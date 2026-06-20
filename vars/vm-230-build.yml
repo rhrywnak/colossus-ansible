@@ -5,12 +5,18 @@
 #
 # PRE-REQS (run on pve-1 first — virtiofs is NOT hot-pluggable):
 #   scripts/create-build-vm-datasets.sh   (ZFS datasets + dir mappings)
-#   user-data copied to /var/coreos/snippets/colossus-build1-user-data.yaml
+#   vendor-data + authorized-keys copied to /var/coreos/snippets/ (the role
+#   copies the keys file automatically; copy the vendor-data file yourself)
 
 vm_id: 230
 vm_name: colossus-build1
 vm_provision: fedora
-vm_cloudinit_userdata: colossus-build1-user-data.yaml
+
+# cloud-init via the VENDOR slot (user-data slot would suppress Proxmox's
+# hostname/network generation). User + SSH keys come from Proxmox-native flags.
+vm_cloudinit_vendordata: colossus-build1-vendor-data.yaml
+vm_ciuser: core
+vm_sshkeys_file: colossus-build1-authorized-keys.pub
 
 # Static networking, applied via Proxmox-native cloud-init (ipconfig0 + nameserver).
 vm_ip: "10.10.100.230/24"
@@ -21,9 +27,13 @@ vm_memory: 32768
 vm_cpuunits: 50
 vm_disk_grow: "+120G"
 
-# Override the role's generic default glob with the real Fedora 44 cloud image
-# name (Fedora 44 renamed it — there is no "Fedora-Server-KVM-*").
-vm_fedora_image_glob: "Fedora-Server-Guest-Generic-44-*.x86_64.qcow2"
+# Enable the virtio-serial guest-agent device so qemu-guest-agent can start.
+vm_agent_enabled: true
+
+# Override the role's generic default glob with the real Fedora 44 cloud image.
+# Use Cloud-Base-Generic (cloud-init image) — NOT Server-Guest-Generic, which
+# is the Anaconda installer image, not a cloud-init qcow2.
+vm_fedora_image_glob: "Fedora-Cloud-Base-Generic-44-*.x86_64.qcow2"
 
 vm_virtiofs_shares:
   - { dirid: "build-cache",   cache: "always" }
