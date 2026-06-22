@@ -1,13 +1,24 @@
 ---
-# build-vm role defaults  (STUB — to be fleshed out after VM 230 exists)
+# build-vm role defaults
 #
-# Installs the build toolchain layer over SSH onto colossus-build1, on top of
-# the minimal Fedora base that cloud-init produced.
+# Prepares colossus-build1 (VM-230) so scripts/build-release.sh can run
+# manually as the `core` user. The actual compilation happens INSIDE the
+# Dockerfiles' own build stages (Rust/Node toolchains live in those images),
+# so the host needs no native Rust/Node — only podman/buildah/git/jq, a ghcr
+# login, and a source checkout.
 
-# Pinned Rust toolchain — leave "" until confirmed, then set for build parity.
-# REFERENCE: colossus-legal/backend/Dockerfile pins `--default-toolchain 1.88.0`.
-# (Confirm with Roman before hardcoding — see TODO in tasks/main.yml.)
-vm_build_rust_version: ""
+# Tooling expected to be present already (verified, not installed).
+build_vm_required_tools:
+  - podman
+  - buildah
+  - git
+  - jq
 
-# Node + container tooling versions (TODO: decide nodejs package vs mise).
-vm_build_node_version: ""
+# Repos — cloned over SSH so the deployed key can also PUSH. The public half of
+# vault_build_ssh_private_key is an account-level key on Roman's GitHub.
+#   colossus-legal  — application source built into the images
+#   colossus-ansible — contains scripts/build-release.sh (the build driver)
+build_vm_legal_repo: "git@github.com:rhrywnak/colossus-legal.git"
+build_vm_legal_src: "{{ ansible_env.HOME }}/Projects/colossus-legal"
+build_vm_ansible_repo: "git@github.com:rhrywnak/colossus-ansible.git"
+build_vm_ansible_src: "{{ ansible_env.HOME }}/Projects/colossus-ansible"

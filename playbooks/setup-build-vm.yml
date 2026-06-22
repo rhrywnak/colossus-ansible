@@ -1,0 +1,20 @@
+---
+# playbooks/setup-build-vm.yml
+#
+# Prepare the build host (VM-230, colossus-build1) so scripts/build-release.sh
+# can be run manually: verify tooling, log in to ghcr (rootless, from Vault),
+# and clone colossus-legal over public HTTPS.
+#
+# Runs ROOTLESS as the `core` user (become: false) — the ghcr auth.json and
+# podman image store must belong to the same user that runs the build.
+#
+# Usage:
+#   ansible-playbook playbooks/setup-build-vm.yml -l colossus-build1 \
+#     --vault-password-file ~/.vault_pass
+
+- name: "Configure colossus-build1 build host"
+  hosts: build_vms
+  become: false
+  gather_facts: true
+  roles:
+    - build-vm

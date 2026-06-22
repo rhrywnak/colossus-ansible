@@ -1,55 +1,167 @@
 ---
 # build-vm/tasks/main.yml
 #
-# STUB — scaffold only. Installs the build toolchain layer over SSH onto
-# colossus-build1 (VMID 230) AFTER first boot. Intentionally not fleshed out
-# yet; we fill this in once the VM exists and the Rust/Node versions are
-# confirmed. Each task below is a clearly-marked TODO placeholder.
+# Prepares colossus-build1 (VM-230) so scripts/build-release.sh can be run
+# manually. Runs ROOTLESS as the `core` user (no become) — the ghcr login and
+# image storage must belong to core, the same identity that runs the build.
 #
-# Runs as the `core` operator user (sudo NOPASSWD) created by cloud-init.
+# Idempotent and non-destructive: verifies tooling, logs in to ghcr, deploys
+# the GitHub SSH key, and clones the source only if it isn't already there.
 
-# ── Build dependencies (system packages) ─────────────────────
-- name: "TODO: install build dependencies"
+# ── 1. Verify required build tools are present ───────────────────
+# Tools are installed by cloud-init (cloud-init/colossus-build1-vendor-data.yaml
+# packages: list), NOT here — the dnf5 Ansible module is broken on Fedora 44
+# (AttributeError: load_config_from_file). We only confirm they are on PATH.
+- name: "Check for required build tools"
+  ansible.builtin.shell: "command -v {{ item }}"
+  register: _tool_checks
+  changed_when: false
+  failed_when: false
+  loop: "{{ build_vm_required_tools }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "Fail if any required build tool is missing"
+  ansible.builtin.assert:
+    that:
+      - _tool_checks.results | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: >-
+      Missing required build tool(s):
+      {{ _tool_checks.results | selectattr('rc', 'ne', 0) | map(attribute='item') | list | join(', ') }}.
+      Add the missing package(s) to the packages: list in
+      cloud-init/colossus-build1-vendor-data.yaml and rebuild the VM.
+    success_msg: "All required build tools present: {{ build_vm_required_tools | join(', ') }}"
+    quiet: true
+
+# ── 2. Authenticate to ghcr.io (rootless, as core) ───────────────
+# Reuses the existing Vault token (already write:packages-scoped). Writes
+# ~core/.config/containers/auth.json so build-release.sh's `podman push` works
+# non-interactively. No ignore_errors — a failed login must stop the run, since
+# a push to ghcr genuinely requires valid credentials.
+- name: "Log in to GitHub Container Registry (rootless, as core)"
+  containers.podman.podman_login:
+    registry: "ghcr.io"
+    username: "{{ vault_ghcr_username }}"
+    password: "{{ vault_ghcr_token }}"
+  no_log: true
+
+# ── 3. Deploy GitHub SSH key (pull + push access) ────────────────
+# The private key comes from Vault; its public half is an account-level key on
+# Roman's GitHub, so it works for any of his repos. Reproducible: a rebuilt VM
+# regains push access from this task alone, no manual key copy.
+- name: "Ensure ~/.ssh exists for core"
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.ssh"
+    state: directory
+    mode: "0700"
+
+- name: "Deploy GitHub SSH private key"
+  ansible.builtin.copy:
+    content: "{{ vault_build_ssh_private_key }}"
+    dest: "{{ ansible_env.HOME }}/.ssh/id_ed25519"
+    mode: "0600"
+  no_log: true
+
+# Scan only the ed25519 host key → a single known_hosts line, which the
+# known_hosts module adds idempotently (dedupes by name, no interactive prompt).
+- name: "Scan github.com ed25519 host key"
+  ansible.builtin.command: "ssh-keyscan -t ed25519 github.com"
+  register: _gh_hostkey
+  changed_when: false
+
+- name: "Add github.com to known_hosts"
+  ansible.builtin.known_hosts:
+    path: "{{ ansible_env.HOME }}/.ssh/known_hosts"
+    name: github.com
+    key: "{{ _gh_hostkey.stdout }}"
+    state: present
+
+# ── 4. Clone source repos over SSH (colossus-legal + colossus-ansible) ──
+# colossus-legal = app source; colossus-ansible = scripts/build-release.sh.
+# SSH remotes so the deployed key can also push. Non-destructive: clone only
+# when absent; an existing checkout (Roman may have a working branch) is left
+# untouched except for repointing its remote to SSH (URL only).
+- name: "Ensure ~/Projects exists"
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/Projects"
+    state: directory
+    mode: "0755"
+
+- name: "Check for an existing colossus-legal checkout"
+  ansible.builtin.stat:
+    path: "{{ build_vm_legal_src }}/.git"
+  register: _legal_git
+
+- name: "Clone colossus-legal over SSH (only if absent)"
+  ansible.builtin.git:
+    repo: "{{ build_vm_legal_repo }}"
+    dest: "{{ build_vm_legal_src }}"
+    update: false
+  when: not _legal_git.stat.exists
+
+# For an existing checkout, repoint origin to SSH if it's still on HTTPS.
+# Touches the remote URL only — no fetch, reset, or checkout.
+- name: "Get current colossus-legal origin URL"
+  ansible.builtin.command: "git -C {{ build_vm_legal_src }} remote get-url origin"
+  register: _legal_remote
+  changed_when: false
+  when: _legal_git.stat.exists
+
+- name: "Repoint colossus-legal origin to SSH (existing checkout)"
+  ansible.builtin.command: "git -C {{ build_vm_legal_src }} remote set-url origin {{ build_vm_legal_repo }}"
+  when:
+    - _legal_git.stat.exists
+    - _legal_remote.stdout | default('') != build_vm_legal_repo
+
+- name: "Check for an existing colossus-ansible checkout"
+  ansible.builtin.stat:
+    path: "{{ build_vm_ansible_src }}/.git"
+  register: _ansible_git
+
+- name: "Clone colossus-ansible over SSH (only if absent)"
+  ansible.builtin.git:
+    repo: "{{ build_vm_ansible_repo }}"
+    dest: "{{ build_vm_ansible_src }}"
+    update: false
+  when: not _ansible_git.stat.exists
+
+- name: "Get current colossus-ansible origin URL"
+  ansible.builtin.command: "git -C {{ build_vm_ansible_src }} remote get-url origin"
+  register: _ansible_remote
+  changed_when: false
+  when: _ansible_git.stat.exists
+
+- name: "Repoint colossus-ansible origin to SSH (existing checkout)"
+  ansible.builtin.command: "git -C {{ build_vm_ansible_src }} remote set-url origin {{ build_vm_ansible_repo }}"
+  when:
+    - _ansible_git.stat.exists
+    - _ansible_remote.stdout | default('') != build_vm_ansible_repo
+
+# ── 5. Confirm podman image storage is on LOCAL disk ─────────────
+# overlay-on-virtiofs was proven broken — the rootless default graphroot
+# (~/.local/share/containers/storage) is on the VM's local disk, which is what
+# we want. We VERIFY this rather than assuming; no storage.conf is written
+# unless the graphroot has drifted onto a virtiofs/prod-zfs mount.
+- name: "Read podman rootless storage graphroot"
+  ansible.builtin.shell: "podman info | grep -A5 graphRoot | grep graphRoot"
+  register: _podman_graphroot
+  changed_when: false
+
+- name: "Assert podman graphroot is on local disk (not virtiofs / prod-zfs)"
+  ansible.builtin.assert:
+    that:
+      - "'/prod-zfs' not in _podman_graphroot.stdout"
+      - "'virtiofs' not in _podman_graphroot.stdout"
+    fail_msg: >-
+      podman graphroot is '{{ _podman_graphroot.stdout }}' — overlay-on-virtiofs
+      is broken. Pin storage.graphroot to a local-disk path before building.
+    success_msg: "podman graphroot on local disk: {{ _podman_graphroot.stdout }}"
+    quiet: true
+
+- name: "Build host ready"
   ansible.builtin.debug:
     msg: >-
-      TODO: dnf install gcc make pkgconf openssl-devel (plus perl, clang as
-      needed for ring/aws-lc-sys). Implement with ansible.builtin.dnf.
-  # - name: "Install build deps"
-  #   become: true
-  #   ansible.builtin.dnf:
-  #     name: [gcc, make, pkgconf, openssl-devel]
-  #     state: present
-
-# ── Rust toolchain (rustup + pinned version) ─────────────────
-- name: "TODO: install rustup + pinned Rust toolchain"
-  ansible.builtin.debug:
-    msg: >-
-      TODO: install rustup, then `rustup toolchain install {{ vm_build_rust_version | default('<PIN>') }}`
-      and set as default. PIN to match build parity with colossus-legal —
-      backend/Dockerfile uses 1.88.0 (CONFIRM with Roman before hardcoding).
-  # - name: "Install rustup (rootless, per-user)"
-  #   ansible.builtin.shell: |
-  #     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-  #       | sh -s -- -y --default-toolchain {{ vm_build_rust_version }}
-  #   args:
-  #     creates: "{{ ansible_env.HOME }}/.rustup"
-  #   when: vm_build_rust_version | length > 0
-
-# ── Node.js ──────────────────────────────────────────────────
-- name: "TODO: install Node.js"
-  ansible.builtin.debug:
-    msg: >-
-      TODO: decide install path — distro `nodejs` package (simple, older) vs
-      `mise` (version-pinned, matches frontend build). Implement once chosen.
-
-# ── Container build tooling (podman + buildah) ───────────────
-- name: "TODO: install podman + buildah"
-  ansible.builtin.debug:
-    msg: >-
-      TODO: dnf install podman buildah; configure rootless for the `core` user
-      (subuid/subgid). Needed for build-release.sh container builds.
-  # - name: "Install podman + buildah"
-  #   become: true
-  #   ansible.builtin.dnf:
-  #     name: [podman, buildah]
-  #     state: present
+      colossus-build1 ready. Source: {{ build_vm_legal_src }}.
+      Run a release with:
+        cd {{ build_vm_legal_src }} && {{ build_vm_legal_src }}/../colossus-ansible/scripts/build-release.sh <version>
+      (or invoke build-release.sh with COLOSSUS_LEGAL_SRC={{ build_vm_legal_src }}).

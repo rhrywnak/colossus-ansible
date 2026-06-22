@@ -29,6 +29,9 @@ ssh_pwauth: false
 packages:
   - qemu-guest-agent
   - git
+  - podman
+  - buildah
+  - jq
 
 # Expand the root partition + filesystem to fill the disk Proxmox grew by
 # vm_disk_grow (+120G). Proxmox grows the block device only — growpart/resizefs
