@@ -129,7 +129,11 @@
     enabled: true
     state: started
     daemon_reload: true
-  when: nvidia_gpu_persistence_mode | bool
+  # Skip under --check: the unit file isn't actually written in a dry run, so
+  # systemd can't find it to enable/start.
+  when:
+    - nvidia_gpu_persistence_mode | bool
+    - not ansible_check_mode
 
 # ══════════════════════════════════════════════════════════════
 # (e) Mask suspend/sleep targets
