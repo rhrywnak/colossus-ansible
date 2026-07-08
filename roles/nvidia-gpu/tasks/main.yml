@@ -26,12 +26,16 @@
   register: nvidia_gpu_installed_query
   changed_when: false
   failed_when: false
+  # Read-only probe — must run even under --check so downstream conditionals
+  # (PPA/install guards) can evaluate; otherwise stdout_lines is unset.
+  check_mode: false
 
 - name: Record installed driver version
   ansible.builtin.set_fact:
     nvidia_gpu_installed_version: >-
       {{ (nvidia_gpu_installed_query.stdout_lines | first | trim)
-         if nvidia_gpu_installed_query.rc == 0 else '' }}
+         if (nvidia_gpu_installed_query.stdout_lines | default([]) | length > 0)
+         else '' }}
 
 - name: Ensure graphics-drivers PPA is present
   # Gated on the same condition as the install: only mutate apt sources when we
@@ -159,6 +163,8 @@
   ansible.builtin.command: nvidia-smi --query-gpu=index,name --format=csv,noheader
   register: nvidia_gpu_enumeration
   changed_when: false
+  # Read-only probe — must run under --check so the assert below has data.
+  check_mode: false
 
 - name: Assert both GPUs enumerate
   ansible.builtin.assert:
@@ -174,6 +180,8 @@
   ansible.builtin.stat:
     path: "{{ nvidia_gpu_cdi_output_path }}"
   register: nvidia_gpu_cdi_stat
+  # The CDI spec is only written on a real apply — skip validation under --check.
+  when: not ansible_check_mode
 
 - name: Assert CDI spec was written
   ansible.builtin.assert:
@@ -181,3 +189,4 @@
       - nvidia_gpu_cdi_stat.stat.exists
     fail_msg: "CDI spec missing at {{ nvidia_gpu_cdi_output_path }}"
     success_msg: "CDI spec present at {{ nvidia_gpu_cdi_output_path }}"
+  when: not ansible_check_mode
