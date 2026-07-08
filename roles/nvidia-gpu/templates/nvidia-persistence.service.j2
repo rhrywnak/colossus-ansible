@@ -5,8 +5,9 @@
 # transient `nvidia-smi -pm 1` header state.
 [Unit]
 Description=Enable NVIDIA persistence mode
-After=multi-user.target
-Wants=multi-user.target
+After=systemd-modules-load.service
+Wants=systemd-modules-load.service
+ConditionPathExists=/dev/nvidia0
 
 [Service]
 Type=oneshot
