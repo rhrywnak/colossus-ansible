@@ -19,6 +19,10 @@
 # toolchain (Rust, Node, podman/buildah) is layered on later by the `build-vm`
 # Ansible role over SSH — NOT here.
 #
+# CONTROL NODE: build1 also serves as the Ansible control node for out-of-fleet
+# bare-metal hosts (colossus-llm1 / the gpu group), so `ansible` is installed at
+# base here rather than layered on later.
+#
 # DEPLOY (copy into the Proxmox snippets dir on pve-1):
 #   scp cloud-init/colossus-build1-vendor-data.yaml \
 #       root@10.10.100.3:/var/coreos/snippets/colossus-build1-vendor-data.yaml
@@ -29,6 +33,7 @@ ssh_pwauth: false
 packages:
   - qemu-guest-agent
   - git
+  - ansible
   - podman
   - buildah
   - jq
