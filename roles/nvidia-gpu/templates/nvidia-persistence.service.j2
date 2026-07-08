@@ -1,0 +1,17 @@
+# Managed by Ansible (nvidia-gpu role) — do not edit manually.
+#
+# Enables NVIDIA persistence mode on every boot so the driver stays resident
+# without an X server / display manager. Reboot-surviving: this replaces the
+# transient `nvidia-smi -pm 1` header state.
+[Unit]
+Description=Enable NVIDIA persistence mode
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nvidia-smi -pm 1
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

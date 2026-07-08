@@ -1,0 +1,24 @@
+---
+# inventory/group_vars/gpu.yml
+# Group vars for the `gpu` group (bare-metal Ubuntu 24.04 GPU hosts).
+
+ansible_user: roman
+
+# This Ubuntu host needs sudo to install drivers / manage systemd units.
+# Set here (not in inventory) because the repo runs with a global
+# `become = False` (ansible.cfg) and the CoreOS hosts use the passwordless
+# `core` user. `roman` escalates via sudo, so become is enabled for the group.
+ansible_become: true
+
+ansible_python_interpreter: /usr/bin/python3
+
+# ── NVIDIA GPU platform ──────────────────────────────────────
+# Known-good driver/CUDA/kernel triple verified at node intake. Pinned on
+# purpose — see roles/nvidia-gpu/tasks/main.yml for why we deviate from the
+# repo's `apt: state: present` norm.
+nvidia_gpu_driver_version: "580.159.04"
+nvidia_gpu_count: 2
+
+# Consumed later by the beszel-agent GPU integration (H4). Declared now so the
+# host advertises GPU telemetry support before that work lands.
+beszel_gpu_enabled: true

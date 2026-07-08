@@ -1,0 +1,20 @@
+---
+# playbooks/deploy-gpu1.yml
+#
+# Provision the bare-metal Ubuntu 24.04 GPU host (colossus-llm1) with the
+# NVIDIA driver pin, container-toolkit CDI spec, persistence mode, and the
+# headless sleep/display-manager masking.
+#
+# This is the entrypoint Semaphore will run. vLLM serving (H3) is added later.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy-gpu1.yml
+#   ansible-playbook playbooks/deploy-gpu1.yml --check --diff
+
+- name: Provision GPU host (colossus-llm1)
+  hosts: gpu
+  become: true
+  gather_facts: true
+
+  roles:
+    - nvidia-gpu

@@ -1,0 +1,75 @@
+---
+# roles/nvidia-gpu/defaults/main.yml
+# Default variables for the nvidia-gpu role.
+
+# ── Driver pin ───────────────────────────────────────────────
+# The upstream driver version. Normally supplied by group_vars/gpu.yml; the
+# default here keeps the role usable standalone. The major number is derived
+# from it so callers only ever set one value.
+nvidia_gpu_driver_version: "580.159.04"
+nvidia_gpu_driver_major: "{{ nvidia_gpu_driver_version.split('.')[0] }}"
+
+# Exact APT package version to pin to. On the already-provisioned box the
+# driver is present at nvidia_gpu_driver_version, so the install task is a
+# no-op and this value is never used. For a FRESH install, set this to the
+# full Debian package version reported by `apt-cache madison nvidia-driver-580`
+# (e.g. 580.159.04-0ubuntu0.24.04.1) — do not guess the -0ubuntu… suffix.
+nvidia_gpu_driver_apt_version: "{{ nvidia_gpu_driver_version }}"
+
+# Graphics-drivers PPA carries the pinned build.
+nvidia_gpu_driver_ppa: "ppa:graphics-drivers/ppa"
+
+# Packages to install (metapackage) and apt-mark hold so `apt upgrade` can't
+# float the pinned driver.
+#
+# HOLD THE FULL PAYLOAD, not just the metapackage: holding only
+# nvidia-driver-{{ major }} lets apt upgrade float the individual
+# libnvidia-*/nvidia-dkms/nvidia-kernel packages it depends on. Each entry is
+# templated on nvidia_gpu_driver_major so the set tracks the pin, and listed
+# explicitly (not globbed) so the hold is auditable.
+#
+# This is the auditable hold set for the 580 branch. On a live box confirm it
+# against `dpkg -l | grep nvidia | grep {{ nvidia_gpu_driver_major }}` and prune
+# any entry not actually installed. The hold task tolerates absent packages, so
+# a fresh host with a slightly different payload won't break the run.
+nvidia_gpu_driver_packages:
+  - "nvidia-driver-{{ nvidia_gpu_driver_major }}"
+  - "nvidia-dkms-{{ nvidia_gpu_driver_major }}"
+  - "nvidia-kernel-common-{{ nvidia_gpu_driver_major }}"
+  - "nvidia-kernel-source-{{ nvidia_gpu_driver_major }}"
+  - "libnvidia-compute-{{ nvidia_gpu_driver_major }}"
+  - "libnvidia-gl-{{ nvidia_gpu_driver_major }}"
+  - "libnvidia-decode-{{ nvidia_gpu_driver_major }}"
+  - "libnvidia-encode-{{ nvidia_gpu_driver_major }}"
+  - "libnvidia-fbc1-{{ nvidia_gpu_driver_major }}"
+  - "libnvidia-cfg1-{{ nvidia_gpu_driver_major }}"
+  - "libnvidia-extra-{{ nvidia_gpu_driver_major }}"
+  - "nvidia-compute-utils-{{ nvidia_gpu_driver_major }}"
+  - "nvidia-utils-{{ nvidia_gpu_driver_major }}"
+  - "xserver-xorg-video-nvidia-{{ nvidia_gpu_driver_major }}"
+
+# ── GPU topology ─────────────────────────────────────────────
+nvidia_gpu_count: 2
+
+# ── Persistence ──────────────────────────────────────────────
+# Persistence mode must survive reboot — codified as a systemd oneshot rather
+# than relying on the transient `nvidia-smi -pm 1` header state.
+nvidia_gpu_persistence_mode: true
+nvidia_gpu_persistence_unit: nvidia-persistence.service
+
+# ── Container Device Interface (CDI) ─────────────────────────
+# nvidia-ctk writes the device spec consumed by podman/nvidia-container-toolkit.
+nvidia_gpu_cdi_output_path: /etc/cdi/nvidia.yaml
+
+# ── Suspend/sleep masking ────────────────────────────────────
+# A headless GPU server must never sleep — mask the sleep targets so nothing
+# (logind, packages) can pull the box into S3/hibernate.
+nvidia_gpu_sleep_targets:
+  - sleep.target
+  - suspend.target
+  - hibernate.target
+  - hybrid-sleep.target
+
+# ── Display manager ──────────────────────────────────────────
+# Masked to reclaim GPU-0 VRAM on this SSH-only box. Reversible via unmask.
+nvidia_gpu_display_manager_unit: gdm

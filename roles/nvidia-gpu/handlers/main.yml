@@ -1,0 +1,11 @@
+---
+# roles/nvidia-gpu/handlers/main.yml
+
+- name: Regenerate CDI spec
+  ansible.builtin.command: >
+    nvidia-ctk cdi generate --output={{ nvidia_gpu_cdi_output_path }}
+  changed_when: true
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true

@@ -1,0 +1,183 @@
+---
+# roles/nvidia-gpu/tasks/main.yml
+#
+# Provisions a bare-metal Ubuntu 24.04 GPU host:
+#   - pinned NVIDIA driver (verify-don't-clobber; no-op on the live box)
+#   - nvidia-container-toolkit + CDI spec generation
+#   - persistence mode as a reboot-surviving systemd unit
+#   - masked suspend/sleep targets and display manager (headless server)
+#
+# Idempotent: safe to re-run. On the already-provisioned box every task is
+# changed=0.
+
+# ══════════════════════════════════════════════════════════════
+# (a) Pinned NVIDIA driver
+# ══════════════════════════════════════════════════════════════
+#
+# DELIBERATE DEVIATION from the repo's `apt: state: present` house norm.
+# This is a live GPU platform with a verified-good driver/CUDA/kernel triple
+# (580.159.04 / CUDA 13.0 / 6.17.0-35). We pin the exact version AND apt-mark
+# hold it so a routine `apt upgrade` cannot float the driver out from under a
+# running vLLM workload. Verify-don't-clobber: we read what is installed first
+# and only touch apt if it is NOT already at the pinned version.
+
+- name: Query the currently-installed NVIDIA driver version
+  ansible.builtin.command: nvidia-smi --query-gpu=driver_version --format=csv,noheader
+  register: nvidia_gpu_installed_query
+  changed_when: false
+  failed_when: false
+
+- name: Record installed driver version
+  ansible.builtin.set_fact:
+    nvidia_gpu_installed_version: >-
+      {{ (nvidia_gpu_installed_query.stdout_lines | first | trim)
+         if nvidia_gpu_installed_query.rc == 0 else '' }}
+
+- name: Ensure graphics-drivers PPA is present
+  # Gated on the same condition as the install: only mutate apt sources when we
+  # actually need to fetch the pinned driver. On the live box (installed ==
+  # pinned) this is skipped, so role application is a true no-op.
+  ansible.builtin.apt_repository:
+    repo: "{{ nvidia_gpu_driver_ppa }}"
+    state: present
+    filename: graphics-drivers-ppa
+    update_cache: true
+  when: nvidia_gpu_installed_version != nvidia_gpu_driver_version
+
+- name: Install pinned NVIDIA driver
+  # Guarded so it is a no-op on the live box (installed == pinned → skipped,
+  # changed=0). Only runs on a fresh host or a version mismatch, in which case
+  # nvidia_gpu_driver_apt_version must carry the full Debian package version
+  # (see defaults/main.yml).
+  ansible.builtin.apt:
+    name: "nvidia-driver-{{ nvidia_gpu_driver_major }}={{ nvidia_gpu_driver_apt_version }}"
+    state: present
+    update_cache: true
+  when: nvidia_gpu_installed_version != nvidia_gpu_driver_version
+
+- name: Gather installed package facts
+  # So the hold loop can skip any payload package that isn't installed on this
+  # host — a hold on an absent package would otherwise fail the run on a fresh
+  # box whose payload differs slightly from the 580-branch set.
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: Hold the pinned driver packages (block apt upgrade from floating them)
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ nvidia_gpu_driver_packages }}"
+  when: item in ansible_facts.packages
+
+# ══════════════════════════════════════════════════════════════
+# (b) NVIDIA container toolkit
+# ══════════════════════════════════════════════════════════════
+# Already present at 1.19.1 on the live box — declared for a fresh host.
+# Left at state: present (house norm) since the toolkit is not part of the
+# pinned GPU triple.
+
+- name: Ensure nvidia-container-toolkit is present
+  ansible.builtin.apt:
+    name: nvidia-container-toolkit
+    state: present
+
+# ══════════════════════════════════════════════════════════════
+# (c) CDI spec generation
+# ══════════════════════════════════════════════════════════════
+# /etc/cdi/ does not exist yet on the live box — create it, then generate the
+# device spec. `creates:` makes generation idempotent; the handler regenerates
+# it if anything upstream changes.
+
+- name: Ensure CDI output directory exists
+  ansible.builtin.file:
+    path: "{{ nvidia_gpu_cdi_output_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Generate NVIDIA CDI spec
+  ansible.builtin.command: >
+    nvidia-ctk cdi generate --output={{ nvidia_gpu_cdi_output_path }}
+  args:
+    creates: "{{ nvidia_gpu_cdi_output_path }}"
+  notify: Regenerate CDI spec
+
+# ══════════════════════════════════════════════════════════════
+# (d) Persistence mode (reboot-surviving)
+# ══════════════════════════════════════════════════════════════
+# Codified as a oneshot unit rather than the transient `nvidia-smi -pm 1`
+# header state, so persistence is re-applied on every boot.
+
+- name: Deploy nvidia-persistence oneshot unit
+  ansible.builtin.template:
+    src: nvidia-persistence.service.j2
+    dest: "/etc/systemd/system/{{ nvidia_gpu_persistence_unit }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+  when: nvidia_gpu_persistence_mode | bool
+
+- name: Enable and start nvidia-persistence unit
+  ansible.builtin.systemd:
+    name: "{{ nvidia_gpu_persistence_unit }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: nvidia_gpu_persistence_mode | bool
+
+# ══════════════════════════════════════════════════════════════
+# (e) Mask suspend/sleep targets
+# ══════════════════════════════════════════════════════════════
+# A headless GPU server must never sleep.
+
+- name: Mask suspend/sleep targets
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+    daemon_reload: true
+  loop: "{{ nvidia_gpu_sleep_targets }}"
+
+# ══════════════════════════════════════════════════════════════
+# (f) Mask the display manager (headless decision)
+# ══════════════════════════════════════════════════════════════
+# The box is SSH-only. Masking gdm stops it claiming GPU-0 and reclaims that
+# VRAM for compute. Reversible with `systemctl unmask {{ ... }}`.
+
+- name: Mask the display manager to reclaim GPU-0 VRAM
+  ansible.builtin.systemd:
+    name: "{{ nvidia_gpu_display_manager_unit }}"
+    masked: true
+    daemon_reload: true
+
+# ══════════════════════════════════════════════════════════════
+# (g) Validate
+# ══════════════════════════════════════════════════════════════
+
+- name: Enumerate GPUs via nvidia-smi
+  ansible.builtin.command: nvidia-smi --query-gpu=index,name --format=csv,noheader
+  register: nvidia_gpu_enumeration
+  changed_when: false
+
+- name: Assert both GPUs enumerate
+  ansible.builtin.assert:
+    that:
+      - nvidia_gpu_enumeration.stdout_lines | length == nvidia_gpu_count
+    fail_msg: >-
+      Expected {{ nvidia_gpu_count }} GPU(s), found
+      {{ nvidia_gpu_enumeration.stdout_lines | length }}:
+      {{ nvidia_gpu_enumeration.stdout }}
+    success_msg: "{{ nvidia_gpu_count }} GPU(s) enumerated."
+
+- name: Confirm CDI spec exists
+  ansible.builtin.stat:
+    path: "{{ nvidia_gpu_cdi_output_path }}"
+  register: nvidia_gpu_cdi_stat
+
+- name: Assert CDI spec was written
+  ansible.builtin.assert:
+    that:
+      - nvidia_gpu_cdi_stat.stat.exists
+    fail_msg: "CDI spec missing at {{ nvidia_gpu_cdi_output_path }}"
+    success_msg: "CDI spec present at {{ nvidia_gpu_cdi_output_path }}"
