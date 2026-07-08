@@ -7,7 +7,6 @@
 Description=Enable NVIDIA persistence mode
 After=systemd-modules-load.service
 Wants=systemd-modules-load.service
-ConditionPathExists=/dev/nvidia0
 
 [Service]
 Type=oneshot

@@ -62,8 +62,10 @@ nvidia_gpu_persistence_unit: nvidia-persistence.service
 nvidia_gpu_cdi_output_path: /etc/cdi/nvidia.yaml
 
 # ── Suspend/sleep masking ────────────────────────────────────
-# A headless GPU server must never sleep — mask the sleep targets so nothing
-# (logind, packages) can pull the box into S3/hibernate.
+# Masking sleep is for always-on appliance hosts that must never sleep. This
+# host is manually suspended overnight (nothing runs on it), so default false —
+# the targets stay available. Flip to true only for an always-on GPU appliance.
+nvidia_gpu_mask_sleep: false
 nvidia_gpu_sleep_targets:
   - sleep.target
   - suspend.target

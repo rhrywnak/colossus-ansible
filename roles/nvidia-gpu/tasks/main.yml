@@ -5,7 +5,7 @@
 #   - pinned NVIDIA driver (verify-don't-clobber; no-op on the live box)
 #   - nvidia-container-toolkit + CDI spec generation
 #   - persistence mode as a reboot-surviving systemd unit
-#   - masked suspend/sleep targets and display manager (headless server)
+#   - optional suspend/sleep masking (off by default) + masked display manager
 #
 # Idempotent: safe to re-run. On the already-provisioned box every task is
 # changed=0.
@@ -136,14 +136,17 @@
     - not ansible_check_mode
 
 # ══════════════════════════════════════════════════════════════
-# (e) Mask suspend/sleep targets
+# (e) Suspend/sleep target masking
 # ══════════════════════════════════════════════════════════════
-# A headless GPU server must never sleep.
+# Toggle via nvidia_gpu_mask_sleep. Default false: this host is manually
+# suspended overnight, so the targets must stay available. Driving `masked:`
+# off the toggle means re-applying with the default actively UNMASKS targets a
+# prior run may have masked — clean reversal, no manual unmask needed.
 
-- name: Mask suspend/sleep targets
+- name: Set suspend/sleep target mask state
   ansible.builtin.systemd:
     name: "{{ item }}"
-    masked: true
+    masked: "{{ nvidia_gpu_mask_sleep | bool }}"
     daemon_reload: true
   loop: "{{ nvidia_gpu_sleep_targets }}"
 
