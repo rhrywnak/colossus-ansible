@@ -62,10 +62,11 @@ nvidia_gpu_persistence_unit: nvidia-persistence.service
 nvidia_gpu_cdi_output_path: /etc/cdi/nvidia.yaml
 
 # ── Suspend/sleep masking ────────────────────────────────────
-# Masking sleep is for always-on appliance hosts that must never sleep. This
-# host is manually suspended overnight (nothing runs on it), so default false —
-# the targets stay available. Flip to true only for an always-on GPU appliance.
-nvidia_gpu_mask_sleep: false
+# Suspend HANGS this box: NVIDIA + this hardware/kernel is unreliable across
+# S3 — a suspend test wedged the machine and required a hard power cycle. Mask
+# the sleep targets so an accidental `systemctl suspend` can't strand it.
+# Nightly shutdown is `poweroff`, which the mask does not affect.
+nvidia_gpu_mask_sleep: true
 nvidia_gpu_sleep_targets:
   - sleep.target
   - suspend.target
