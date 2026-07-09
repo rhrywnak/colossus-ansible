@@ -1,0 +1,5 @@
+---
+galaxy_info:
+  role_name: vllm-serve
+  description: vLLM serving (Podman/Quadlet) + Surya OCR systemd unit + GPU profile switching for colossus-llm1.
+dependencies: []

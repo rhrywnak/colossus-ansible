@@ -1,0 +1,55 @@
+---
+# roles/vllm-serve/defaults/main.yml
+# Default variables for the vllm-serve role: vLLM serving + Surya OCR unit +
+# GPU profile definitions. Data only; templates/tasks consume these.
+
+# ── Image (NGC bridge pin — DESIGN D1; H3b flips to upstream vllm/vllm-openai) ──
+vllm_image: "nvcr.io/nvidia/vllm:25.09-py3"
+
+# ── Paths ────────────────────────────────────────────────────
+vllm_models_dir: /var/lib/vllm/models        # HF_HOME on the host (system path, root-owned)
+vllm_env_dir: "{{ app_env_dir }}"            # /etc/colossus/env (from group_vars/all/main.yml)
+
+# ── Open WebUI companion (DESIGN D7) ─────────────────────────
+vllm_webui_enabled: true
+vllm_webui_image: "ghcr.io/open-webui/open-webui:main"   # PIN a digest at template time
+vllm_webui_port: 8088
+
+# ── vLLM instances (data; one Quadlet unit per entry) ────────
+# Instance 1 = the POC-proven baseline. GPU 0 only, no TP (DESIGN D2).
+# revision: the pinned HF commit SHA of the cached 14B-AWQ snapshot — set to the
+# REAL value captured on the node (see the read step below), NOT a floating tag.
+vllm_instances:
+  - name: qwen14b-awq
+    model_repo: "Qwen/Qwen2.5-14B-Instruct-AWQ"
+    revision: "REPLACE_WITH_CACHED_SHA"
+    quantization: awq
+    port: 8001
+    gpus: "0"
+    tensor_parallel: 1
+    max_model_len: 8192
+    max_num_seqs: 4
+    gpu_memory_utilization: 0.90
+    structured_output: guided
+
+# ── Surya OCR (venv systemd unit; owns cuda:1 via TORCH_DEVICE) ──
+surya_ocr_enabled: true
+surya_ocr_workdir: /home/roman/Projects/local-ocr
+surya_ocr_python: /home/roman/surya-env/bin/python
+surya_ocr_script: surya_ocr_service.py
+surya_ocr_torch_device: "cuda:1"
+surya_ocr_host: "0.0.0.0"
+surya_ocr_port: 8340
+
+# ── GPU profiles (PLAN §1.2; profiles-as-data) ───────────────
+# Unit names as systemd sees them. vLLM units are vllm-<name>.service;
+# surya is surya-ocr.service. For H3 only 'standard' and 'all-stop' are fully
+# defined — dual-llm/big-model reference H6 slate models not yet pinned.
+gpu1_profiles:
+  standard:
+    up: [vllm-qwen14b-awq, surya-ocr]
+  ocr-max:
+    up: [surya-ocr]
+  all-stop:
+    up: []
+gpu1_active_profile_file: /etc/colossus/gpu1-active-profile
