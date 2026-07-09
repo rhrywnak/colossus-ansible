@@ -1,0 +1,35 @@
+# Managed by Ansible — do not edit manually
+# Platform: colossus-llm1 | Instance: {{ item.name }} | Image: {{ vllm_image }}
+
+[Unit]
+Description=vLLM {{ item.name }} ({{ item.model_repo }} @ {{ item.revision[:12] }})
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image={{ vllm_image }}
+ContainerName=vllm-{{ item.name }}
+Network=host
+AddDevice=nvidia.com/gpu={{ item.gpus }}
+PodmanArgs=--shm-size=8g
+EnvironmentFile={{ vllm_env_dir }}/vllm-{{ item.name }}.env
+Environment=HF_HOME=/models
+Volume={{ vllm_models_dir }}:/models:rw
+Exec=vllm serve {{ item.model_repo }} \
+  --revision {{ item.revision }} \
+  --quantization {{ item.quantization }} \
+  --tensor-parallel-size {{ item.tensor_parallel }} \
+  --max-model-len {{ item.max_model_len }} \
+  --max-num-seqs {{ item.max_num_seqs }} \
+  --gpu-memory-utilization {{ item.gpu_memory_utilization }} \
+  --port {{ item.port }} \
+  --api-key ${VLLM_API_KEY} \
+  --download-dir /models
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target default.target

@@ -4,7 +4,7 @@
 # GPU profile definitions. Data only; templates/tasks consume these.
 
 # ── Image (NGC bridge pin — DESIGN D1; H3b flips to upstream vllm/vllm-openai) ──
-vllm_image: "nvcr.io/nvidia/vllm:25.09-py3"
+vllm_image: "nvcr.io/nvidia/vllm@sha256:15f380ad9c32f0ac57ac16e4b778c6f733c88b9ffe3a936035d0a59ad17b1aab"  # NGC 25.09-py3, digest-pinned (D1; identity tuple C7)
 
 # ── Paths ────────────────────────────────────────────────────
 vllm_models_dir: /var/lib/vllm/models        # HF_HOME on the host (system path, root-owned)
@@ -22,7 +22,7 @@ vllm_webui_port: 8088
 vllm_instances:
   - name: qwen14b-awq
     model_repo: "Qwen/Qwen2.5-14B-Instruct-AWQ"
-    revision: "REPLACE_WITH_CACHED_SHA"
+    revision: "539535859b135b0244c91f3e59816150c8056698"
     quantization: awq
     port: 8001
     gpus: "0"
