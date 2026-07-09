@@ -18,3 +18,4 @@
 
   roles:
     - nvidia-gpu
+    - vllm-serve
