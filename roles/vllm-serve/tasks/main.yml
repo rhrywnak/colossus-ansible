@@ -59,6 +59,15 @@
     recurse: true
   when: _cached_model_src.stat.exists
 
+# ── Ensure the env directory exists (no upstream role creates it on this host) ──
+- name: "Create the colossus env directory"
+  ansible.builtin.file:
+    path: "{{ vllm_env_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 # ── Write the vLLM secrets env file (one per instance) ──
 - name: "Write vLLM env file(s)"
   ansible.builtin.template:
