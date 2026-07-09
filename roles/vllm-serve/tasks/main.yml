@@ -80,3 +80,78 @@
   loop_control:
     label: "{{ item.name }}"
   no_log: true
+
+# ══════════════════════════════════════════════════════════════
+# PART 2: Surya systemd unit + firewall + quadlet install/validate
+# ══════════════════════════════════════════════════════════════
+
+# ── Surya OCR systemd unit (promoted from bare process) ──
+- name: "Deploy surya-ocr systemd unit"
+  ansible.builtin.template:
+    src: surya-ocr.service.j2
+    dest: /etc/systemd/system/surya-ocr.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+  when: surya_ocr_enabled | bool
+
+- name: "Enable surya-ocr (start on boot; profile controls running state)"
+  ansible.builtin.systemd:
+    name: surya-ocr.service
+    enabled: true
+    daemon_reload: true
+  when:
+    - surya_ocr_enabled | bool
+    - not ansible_check_mode
+
+# ── vLLM Quadlet unit files (generator turns these into services) ──
+- name: "Write vLLM Quadlet unit(s)"
+  ansible.builtin.template:
+    src: vllm.container.j2
+    dest: "{{ quadlet_dir }}/vllm-{{ item.name }}.container"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ vllm_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd
+
+# ── Firewall: additive scoped allow rules for the managed ports ──
+- name: "Allow managed ports from trusted subnets"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.1 }}"
+    proto: tcp
+    src: "{{ item.0 }}"
+  loop: "{{ vllm_firewall_source_subnets | product(vllm_firewall_ports) | list }}"
+  loop_control:
+    label: "{{ item.0 }} -> {{ item.1 }}"
+
+# ── Reload systemd so the Quadlet generator emits the vllm-*.service units ──
+- name: "Reload systemd to generate Quadlet services"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: not ansible_check_mode
+
+# ── Validate: unit files on disk + generated services known to systemd ──
+- name: "Confirm Quadlet unit file(s) written"
+  ansible.builtin.stat:
+    path: "{{ quadlet_dir }}/vllm-{{ item.name }}.container"
+  register: _vllm_quadlet_stat
+  loop: "{{ vllm_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: not ansible_check_mode
+
+- name: "Assert Quadlet unit file(s) exist"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: "Quadlet unit missing for {{ item.item.name }}"
+    success_msg: "Quadlet unit present for {{ item.item.name }}"
+  loop: "{{ _vllm_quadlet_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: not ansible_check_mode

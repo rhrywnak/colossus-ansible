@@ -53,3 +53,16 @@ gpu1_profiles:
   all-stop:
     up: []
 gpu1_active_profile_file: /etc/colossus/gpu1-active-profile
+
+# ── Firewall (ufw) source scoping ────────────────────────────
+# Additive allow rules for the managed ports, scoped to the trusted internal
+# subnets: 10.10.100.0/24 (app tier) and 10.10.0.0/24 (workstation, incl. the
+# Mac and this host). Does NOT remove the pre-existing wide-open rules (G-3) —
+# that cleanup is a deliberate separate hardening step, not done here.
+vllm_firewall_source_subnets:
+  - "10.10.100.0/24"
+  - "10.10.0.0/24"
+# Ports opened to those subnets. WebUI port included only when enabled.
+vllm_firewall_ports:
+  - "{{ vllm_instances[0].port }}"   # 8001 vLLM
+  - "{{ surya_ocr_port }}"           # 8340 Surya

@@ -1,0 +1,20 @@
+# Managed by Ansible — do not edit manually
+# Surya OCR (Colossus Legal) | owns cuda:1 via TORCH_DEVICE
+[Unit]
+Description=Surya OCR Service (Colossus Legal)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=roman
+WorkingDirectory={{ surya_ocr_workdir }}
+Environment=TORCH_DEVICE={{ surya_ocr_torch_device }}
+Environment=SURYA_HOST={{ surya_ocr_host }}
+Environment=SURYA_PORT={{ surya_ocr_port }}
+ExecStart={{ surya_ocr_python }} {{ surya_ocr_script }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
