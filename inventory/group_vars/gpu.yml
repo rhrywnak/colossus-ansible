@@ -22,3 +22,40 @@ nvidia_gpu_count: 2
 # Consumed later by the beszel-agent GPU integration (H4). Declared now so the
 # host advertises GPU telemetry support before that work lands.
 beszel_gpu_enabled: true
+
+# ── vLLM serving: instances + GPU profiles (reconciler-facing data) ──
+# Lives in group_vars (not role defaults) because playbooks/gpu1-profile.yml is a
+# role-less play and must see this data. The vllm-serve role also reads it when run
+# via deploy-gpu1.yml (group_vars is in scope there too). One source of truth.
+
+# One vLLM Quadlet unit per entry. Instance 1 = POC-proven baseline: GPU 0 only,
+# no TP (DESIGN D2). revision = pinned HF commit SHA of the cached snapshot.
+vllm_instances:
+  - name: qwen14b-awq
+    model_repo: "Qwen/Qwen2.5-14B-Instruct-AWQ"
+    revision: "539535859b135b0244c91f3e59816150c8056698"
+    quantization: awq
+    port: 8001
+    gpus: "0"
+    tensor_parallel: 1
+    max_model_len: 8192
+    max_num_seqs: 4
+    gpu_memory_utilization: 0.90
+    structured_output: guided
+
+# Surya OCR serving port (health-check + firewall). Rest of the surya launch
+# facts stay in the role defaults (role-internal).
+surya_ocr_port: 8340
+
+# GPU profiles (PLAN §1.2; profiles-as-data). Unit names as systemd sees them:
+# vLLM units are vllm-<name>.service; surya is surya-ocr.service. For H3 only
+# 'standard' / 'ocr-max' / 'all-stop' are fully defined — dual-llm/big-model
+# reference H6 slate models not yet pinned.
+gpu1_profiles:
+  standard:
+    up: [vllm-qwen14b-awq, surya-ocr]
+  ocr-max:
+    up: [surya-ocr]
+  all-stop:
+    up: []
+gpu1_active_profile_file: /etc/colossus/gpu1-active-profile
