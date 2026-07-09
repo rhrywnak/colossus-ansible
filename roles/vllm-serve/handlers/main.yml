@@ -1,0 +1,8 @@
+---
+# roles/vllm-serve/handlers/main.yml
+# Handler name matches the notify strings in tasks/main.yml exactly, and
+# mirrors the nvidia-gpu role's handler for consistency.
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
