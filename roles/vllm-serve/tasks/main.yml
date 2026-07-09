@@ -1,0 +1,73 @@
+---
+# roles/vllm-serve/tasks/main.yml
+# PART 1: secrets env file + model cache placement.
+# (Surya unit, ufw, quadlet install/validate are added in part 2.)
+
+# ── Bind vault secrets to locals (house pattern: set_fact + no_log) ──
+- name: "Set vLLM API key"
+  ansible.builtin.set_fact:
+    _vllm_api_key: "{{ vault_vllm_api_key }}"
+  no_log: true
+
+- name: "Set Hugging Face token"
+  ansible.builtin.set_fact:
+    _hf_token: "{{ vault_hf_token }}"
+  no_log: true
+
+# ── System model-cache directory (root-owned, HF hub layout) ──
+- name: "Create vLLM models directory"
+  ansible.builtin.file:
+    path: "{{ vllm_models_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "Create HF hub subdirectory under the models dir"
+  ansible.builtin.file:
+    path: "{{ vllm_models_dir }}/hub"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── Move the cached 14B-AWQ snapshot to the system path (once) ──
+# Moves ONLY this model dir, preserving the HF hub layout so the pinned
+# refs/main SHA resolves as a cache hit. The 70B/72B POC leftovers in
+# ~roman/.cache/huggingface are deliberately NOT migrated (H1 as-built).
+# Guarded by creates: — runs once, then changed=0 forever.
+- name: "Check for the cached model at the source path"
+  ansible.builtin.stat:
+    path: "/home/roman/.cache/huggingface/hub/models--Qwen--Qwen2.5-14B-Instruct-AWQ"
+  register: _cached_model_src
+  check_mode: false
+
+- name: "Move cached 14B-AWQ into the system models dir"
+  ansible.builtin.command:
+    cmd: >-
+      mv /home/roman/.cache/huggingface/hub/models--Qwen--Qwen2.5-14B-Instruct-AWQ
+      {{ vllm_models_dir }}/hub/models--Qwen--Qwen2.5-14B-Instruct-AWQ
+    creates: "{{ vllm_models_dir }}/hub/models--Qwen--Qwen2.5-14B-Instruct-AWQ"
+  when: _cached_model_src.stat.exists
+
+- name: "Ensure moved model tree is root-owned"
+  ansible.builtin.file:
+    path: "{{ vllm_models_dir }}/hub/models--Qwen--Qwen2.5-14B-Instruct-AWQ"
+    state: directory
+    owner: root
+    group: root
+    recurse: true
+  when: _cached_model_src.stat.exists
+
+# ── Write the vLLM secrets env file (one per instance) ──
+- name: "Write vLLM env file(s)"
+  ansible.builtin.template:
+    src: vllm.env.j2
+    dest: "{{ vllm_env_dir }}/vllm-{{ item.name }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ vllm_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
