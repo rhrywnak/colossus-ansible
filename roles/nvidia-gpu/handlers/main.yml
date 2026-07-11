@@ -3,7 +3,9 @@
 
 - name: Regenerate CDI spec
   ansible.builtin.command: >
-    nvidia-ctk cdi generate --output={{ nvidia_gpu_cdi_output_path }}
+    nvidia-ctk cdi generate
+    --output={{ nvidia_gpu_cdi_output_path }}
+    --feature-flag=no-additional-gids-for-device-nodes
   changed_when: true
 
 - name: Reload systemd

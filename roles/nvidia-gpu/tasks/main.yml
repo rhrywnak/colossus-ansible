@@ -100,11 +100,33 @@
     group: root
     mode: "0755"
 
-- name: Generate NVIDIA CDI spec
+# CDI spec generation — pinned podman-4.9.3-parseable (no additionalGids -> <=0.6.0).
+# Toolkit 1.19+ injects additionalGids, forcing cdiVersion 0.7.0, which podman 4.9.3
+# (CDI lib <=0.6.0) drops entirely -> "unresolvable CDI devices". The feature flag
+# suppresses additionalGids; min-version recalc drops the spec to 0.5.0. Regen when
+# the spec is missing OR still carries the field (self-heals a stale 0.7.0 spec).
+- name: Stat existing CDI spec
+  ansible.builtin.stat:
+    path: "{{ nvidia_gpu_cdi_output_path }}"
+  register: _cdi_spec
+
+- name: Check whether existing CDI spec has the 0.7.0 additionalGids trigger
+  ansible.builtin.command:
+    cmd: "grep -qi additionalgids {{ nvidia_gpu_cdi_output_path }}"
+  register: _cdi_gids
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _cdi_spec.stat.exists
+
+- name: Generate NVIDIA CDI spec (podman-4.9.3-compatible, no additionalGids)
   ansible.builtin.command: >
-    nvidia-ctk cdi generate --output={{ nvidia_gpu_cdi_output_path }}
-  args:
-    creates: "{{ nvidia_gpu_cdi_output_path }}"
+    nvidia-ctk cdi generate
+    --output={{ nvidia_gpu_cdi_output_path }}
+    --feature-flag=no-additional-gids-for-device-nodes
+  when: >
+    (not _cdi_spec.stat.exists)
+    or (_cdi_gids.rc | default(1)) == 0
   notify: Regenerate CDI spec
 
 # ══════════════════════════════════════════════════════════════
