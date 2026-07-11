@@ -35,3 +35,7 @@ vllm_firewall_source_subnets:
 vllm_firewall_ports:
   - "{{ vllm_instances[0].port }}"   # 8001 vLLM
   - "{{ surya_ocr_port }}"           # 8340 Surya
+
+# ── Boot-restore (Option A): paths for the local reconciler ──
+gpu1_profiles_json: /etc/colossus/gpu1-profiles.json
+gpu1_profile_restore_script: /usr/local/sbin/gpu1-profile-restore.sh

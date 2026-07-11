@@ -1,0 +1,17 @@
+# Managed by Ansible — do not edit manually
+# Boot-restore oneshot: reconcile GPU units to the last-active profile.
+# Runs after the Quadlet generator has emitted vllm-*.service and after network.
+[Unit]
+Description=Restore GPU profile (last-active) on boot
+After=network-online.target
+Wants=network-online.target
+# Ensure the generated vllm quadlet services exist before we act on them.
+After=podman-user-wait-network-online.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{ gpu1_profile_restore_script }}
+
+[Install]
+WantedBy=multi-user.target

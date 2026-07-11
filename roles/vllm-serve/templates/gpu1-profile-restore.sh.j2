@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Managed by Ansible — do not edit manually
+# Boot-restore: reconcile GPU units to the last-active profile (Option A).
+# Reads {{ gpu1_active_profile_file }} (the marker) and {{ gpu1_profiles_json }}
+# (the profile->units map rendered at deploy). Mirrors playbooks/gpu1-profile.yml:
+# start units in the active profile's up-list; stop every other managed unit.
+set -euo pipefail
+
+MARKER="{{ gpu1_active_profile_file }}"
+MAP="{{ gpu1_profiles_json }}"
+
+# No marker or no map -> nothing to restore; exit clean (fresh box, pre-first-deploy).
+[ -r "$MARKER" ] || { echo "no profile marker; nothing to restore"; exit 0; }
+[ -r "$MAP" ]    || { echo "no profile map; nothing to restore"; exit 0; }
+
+PROFILE="$(tr -d '[:space:]' < "$MARKER")"
+[ -n "$PROFILE" ] || { echo "empty marker; nothing to restore"; exit 0; }
+
+# Managed universe = union of all up-lists across all profiles.
+MANAGED="$(jq -r '[.[].up[]] | unique | .[]' "$MAP")"
+# Up-list for the active profile.
+UP="$(jq -r --arg p "$PROFILE" '.[$p].up[]?' "$MAP")"
+
+# Validate the profile exists in the map.
+if ! jq -e --arg p "$PROFILE" 'has($p)' "$MAP" >/dev/null; then
+  echo "profile '$PROFILE' not in map; refusing to act"; exit 1
+fi
+
+echo "boot-restore: profile '$PROFILE'"
+
+# Stop managed units NOT in the up-list.
+for u in $MANAGED; do
+  if ! echo "$UP" | grep -qx "$u"; then
+    echo "  stop  ${u}.service"
+    systemctl stop "${u}.service" || true
+  fi
+done
+
+# Start units in the up-list.
+for u in $UP; do
+  echo "  start ${u}.service"
+  systemctl start "${u}.service" || true
+done
+
+echo "boot-restore: done"

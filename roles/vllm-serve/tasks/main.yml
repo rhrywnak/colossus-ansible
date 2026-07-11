@@ -155,3 +155,44 @@
   loop_control:
     label: "{{ item.item.name }}"
   when: not ansible_check_mode
+
+# ══════════════════════════════════════════════════════════════
+# PART 3: Boot-restore (Option A) — reconcile to last-active profile on boot
+# ══════════════════════════════════════════════════════════════
+
+- name: "Ensure jq is present (boot-restore script dependency)"
+  ansible.builtin.apt:
+    name: jq
+    state: present
+
+- name: "Render the profile->units map for the local boot-restore script"
+  ansible.builtin.copy:
+    content: "{{ gpu1_profiles | to_nice_json }}\n"
+    dest: "{{ gpu1_profiles_json }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "Install the boot-restore reconciler script"
+  ansible.builtin.template:
+    src: gpu1-profile-restore.sh.j2
+    dest: "{{ gpu1_profile_restore_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "Install the boot-restore oneshot unit"
+  ansible.builtin.template:
+    src: gpu1-profile-restore.service.j2
+    dest: /etc/systemd/system/gpu1-profile-restore.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: "Enable gpu1-profile-restore (runs on boot)"
+  ansible.builtin.systemd:
+    name: gpu1-profile-restore.service
+    enabled: true
+    daemon_reload: true
+  when: not ansible_check_mode
