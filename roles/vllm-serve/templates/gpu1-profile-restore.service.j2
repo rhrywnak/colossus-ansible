@@ -5,8 +5,6 @@
 Description=Restore GPU profile (last-active) on boot
 After=network-online.target
 Wants=network-online.target
-# Ensure the generated vllm quadlet services exist before we act on them.
-After=podman-user-wait-network-online.service
 
 [Service]
 Type=oneshot
