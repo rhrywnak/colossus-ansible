@@ -106,9 +106,12 @@
 
 # force: no — never clobber the operator's current choice on redeploy. This only
 # seeds the default (first instance) when active.yaml does not yet exist.
+# src is RELATIVE (bare sibling filename): the container mounts the host configs
+# dir at /models/configs, so an absolute host-path target would dangle inside the
+# container. A relative link resolves identically on host and in the container.
 - name: "Seed the active config symlink (first instance) if absent"
   ansible.builtin.file:
-    src: "{{ vllm_models_dir }}/configs/{{ vllm_instances[0].name }}.yaml"
+    src: "{{ vllm_instances[0].name }}.yaml"
     dest: "{{ vllm_models_dir }}/configs/active.yaml"
     state: link
     force: false
