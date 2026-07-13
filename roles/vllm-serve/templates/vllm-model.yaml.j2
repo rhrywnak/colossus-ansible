@@ -1,0 +1,13 @@
+# Managed by Ansible — do not edit manually
+# vLLM serve config for instance: {{ item.name }}
+# Consumed via: vllm serve --config /models/configs/active.yaml
+# Keys are long CLI flags without the leading '--' (dashes, not underscores).
+model: {{ item.model_repo }}
+revision: "{{ item.revision }}"
+quantization: {{ item.quantization }}
+tensor-parallel-size: {{ item.tensor_parallel }}
+max-model-len: {{ item.max_model_len }}
+max-num-seqs: {{ item.max_num_seqs }}
+gpu-memory-utilization: {{ item.gpu_memory_utilization }}
+port: {{ item.port }}
+download-dir: /models
