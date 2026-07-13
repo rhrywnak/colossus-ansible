@@ -23,7 +23,6 @@ Exec=vllm serve {{ item.model_repo }} \
   --max-num-seqs {{ item.max_num_seqs }} \
   --gpu-memory-utilization {{ item.gpu_memory_utilization }} \
   --port {{ item.port }} \
-  --api-key ${VLLM_API_KEY} \
   --download-dir /models
 
 [Service]
