@@ -81,10 +81,11 @@
     label: "{{ item.name }}"
   no_log: true
 
-# ── Per-model vLLM serve configs + active symlink (no-redeploy switching) ──
+# ── Per-model vLLM serve configs (Option C: one config per unit) ──
 # One YAML per instance lives under the models volume (mounted at /models in the
-# container). The Quadlet unit runs `vllm serve --config /models/configs/active.yaml`,
-# so switching models is: repoint the symlink + restart the container — no Ansible.
+# container). Each Quadlet unit runs `vllm serve --config /models/configs/<name>.yaml`
+# — its OWN config, no shared active.yaml symlink (which collides once a second unit
+# exists). Model selection is which unit runs (GPU profile), not a symlink repoint.
 - name: "Create the vLLM configs directory"
   ansible.builtin.file:
     path: "{{ vllm_models_dir }}/configs"
@@ -103,18 +104,6 @@
   loop: "{{ vllm_instances }}"
   loop_control:
     label: "{{ item.name }}"
-
-# force: no — never clobber the operator's current choice on redeploy. This only
-# seeds the default (first instance) when active.yaml does not yet exist.
-# src is RELATIVE (bare sibling filename): the container mounts the host configs
-# dir at /models/configs, so an absolute host-path target would dangle inside the
-# container. A relative link resolves identically on host and in the container.
-- name: "Seed the active config symlink (first instance) if absent"
-  ansible.builtin.file:
-    src: "{{ vllm_instances[0].name }}.yaml"
-    dest: "{{ vllm_models_dir }}/configs/active.yaml"
-    state: link
-    force: false
 
 # ══════════════════════════════════════════════════════════════
 # PART 2: Surya systemd unit + firewall + quadlet install/validate

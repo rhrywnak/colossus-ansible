@@ -10,12 +10,14 @@ Wants=network-online.target
 Image={{ vllm_image }}
 ContainerName=vllm-{{ item.name }}
 Network=host
-AddDevice=nvidia.com/gpu={{ item.gpus }}
+{% for g in item.gpus.split(',') %}
+AddDevice=nvidia.com/gpu={{ g }}
+{% endfor %}
 PodmanArgs=--shm-size=8g
 EnvironmentFile={{ vllm_env_dir }}/vllm-{{ item.name }}.env
 Environment=HF_HOME=/models
 Volume={{ vllm_models_dir }}:/models:rw
-Exec=vllm serve --config /models/configs/active.yaml
+Exec=vllm serve --config /models/configs/{{ item.name }}.yaml
 
 [Service]
 Restart=always
