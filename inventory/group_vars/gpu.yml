@@ -23,37 +23,66 @@ nvidia_gpu_count: 2
 # host advertises GPU telemetry support before that work lands.
 beszel_gpu_enabled: true
 
-# ── vLLM serving: instances + GPU profiles (reconciler-facing data) ──
+# ── vLLM serving: GPU-layout units + per-model configs + GPU profiles ──
 # Lives in group_vars (not role defaults) because playbooks/gpu1-profile.yml is a
 # role-less play and must see this data. The vllm-serve role also reads it when run
 # via deploy-gpu1.yml (group_vars is in scope there too). One source of truth.
 
-# One vLLM Quadlet unit per entry. Instance 1 = POC-proven baseline: GPU 0 only,
-# no TP (DESIGN D2). revision = pinned HF commit SHA of the cached snapshot.
-vllm_instances:
+# TWO generic GPU-layout units (NOT one-unit-per-model). Each layout exposes a
+# fixed set of GPUs and serves whatever config sits at the fixed path
+# /models/configs/<layout>.yaml. Model selection = cp a per-model config onto that
+# path + restart (operator/colossus-legal), never a unit change. AddDevice lines
+# come from `gpus` via the {% raw %}{% for g in gpus.split(',') %}{% endraw %} loop
+# in vllm.container.j2. Both layouts serve vllm_port; only one runs at a time
+# (2gpu = big-model exclusive mode, §5).
+vllm_port: 8001
+vllm_layouts:
+  - name: 1gpu
+    gpus: "0"
+  - name: 2gpu
+    gpus: "0,1"
+
+# Per-model serve configs (the reusable data). Each renders via vllm-model.yaml.j2
+# to /models/configs/<name>.yaml. Adding a model = add an entry here (or hand-drop
+# a YAML) — no unit change. tensor_parallel MUST match the layout the config is
+# cp'd onto (TP=1 -> 1gpu, TP=2 -> 2gpu). revision = pinned HF commit SHA.
+vllm_models:
   - name: qwen14b-awq
     model_repo: "Qwen/Qwen2.5-14B-Instruct-AWQ"
     revision: "539535859b135b0244c91f3e59816150c8056698"
     quantization: awq
-    port: 8001
-    gpus: "0"
     tensor_parallel: 1
     max_model_len: 8192
     max_num_seqs: 4
     gpu_memory_utilization: 0.90
-    structured_output: guided
+  - name: qwen32b-awq
+    model_repo: "Qwen/Qwen2.5-32B-Instruct-AWQ"
+    revision: "5c7cb76a268fc6cfbb9c4777eb24ba6e27f9ee6c"
+    quantization: awq
+    tensor_parallel: 2
+    max_model_len: 8192
+    max_num_seqs: 2
+    gpu_memory_utilization: 0.90
+
+# Which model config seeds each fixed layout path on first deploy (seed only —
+# force:false/creates-guard never clobbers the operator's live choice on redeploy).
+vllm_layout_default_model:
+  1gpu: qwen14b-awq
+  2gpu: qwen32b-awq
 
 # Surya OCR serving port (health-check + firewall). Rest of the surya launch
 # facts stay in the role defaults (role-internal).
 surya_ocr_port: 8340
 
 # GPU profiles (PLAN §1.2; profiles-as-data). Unit names as systemd sees them:
-# vLLM units are vllm-<name>.service; surya is surya-ocr.service. For H3 only
-# 'standard' / 'ocr-max' / 'all-stop' are fully defined — dual-llm/big-model
-# reference H6 slate models not yet pinned.
+# vLLM units are vllm-<layout>.service (vllm-1gpu / vllm-2gpu); surya is
+# surya-ocr.service. 'standard' = 1gpu model + OCR (shared); 'big-model' = 2gpu
+# TP=2 exclusive (OCR + 1gpu stopped, §5); 'ocr-max' = OCR only; 'all-stop' = idle.
 gpu1_profiles:
   standard:
-    up: [vllm-qwen14b-awq, surya-ocr]
+    up: [vllm-1gpu, surya-ocr]
+  big-model:
+    up: [vllm-2gpu]
   ocr-max:
     up: [surya-ocr]
   all-stop:

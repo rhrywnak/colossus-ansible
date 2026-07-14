@@ -68,7 +68,10 @@
     group: root
     mode: "0755"
 
-# ── Write the vLLM secrets env file (one per instance) ──
+# ── Write the vLLM secrets env file (one per layout unit) ──
+# EnvironmentFile in each layout unit is vllm-<layout>.env; content is just the
+# HF token (identical across layouts) — one file per unit keeps the unit template
+# uniform.
 - name: "Write vLLM env file(s)"
   ansible.builtin.template:
     src: vllm.env.j2
@@ -76,16 +79,16 @@
     owner: root
     group: root
     mode: "0600"
-  loop: "{{ vllm_instances }}"
+  loop: "{{ vllm_layouts }}"
   loop_control:
     label: "{{ item.name }}"
   no_log: true
 
-# ── Per-model vLLM serve configs (Option C: one config per unit) ──
-# One YAML per instance lives under the models volume (mounted at /models in the
-# container). Each Quadlet unit runs `vllm serve --config /models/configs/<name>.yaml`
-# — its OWN config, no shared active.yaml symlink (which collides once a second unit
-# exists). Model selection is which unit runs (GPU profile), not a symlink repoint.
+# ── Per-model vLLM serve configs (the reusable catalog) ──
+# One YAML per MODEL under /models/configs/<model>.yaml. These are the menu, not
+# the active config. Two generic layout units (vllm-1gpu / vllm-2gpu) each read a
+# fixed path /models/configs/<layout>.yaml; switching = cp a model config onto that
+# path + restart (operator/colossus-legal), never a unit change.
 - name: "Create the vLLM configs directory"
   ansible.builtin.file:
     path: "{{ vllm_models_dir }}/configs"
@@ -101,9 +104,25 @@
     owner: root
     group: root
     mode: "0644"
-  loop: "{{ vllm_instances }}"
+  loop: "{{ vllm_models }}"
   loop_control:
     label: "{{ item.name }}"
+
+# ── Seed the fixed layout active paths (first deploy only) ──
+# cp the layout's default model config onto /models/configs/<layout>.yaml so the
+# box boots serving something. creates: guard = idempotent AND never clobbers the
+# operator's live choice on redeploy (the whole point of cp-to-switch). The command
+# module is skipped under --check (no state change), so check mode stays clean; the
+# source config was written by the template task above on a real run.
+- name: "Seed fixed layout active config from its default model (never clobbers operator choice)"
+  ansible.builtin.command:
+    cmd: >-
+      cp {{ vllm_models_dir }}/configs/{{ vllm_layout_default_model[item.name] }}.yaml
+      {{ vllm_models_dir }}/configs/{{ item.name }}.yaml
+    creates: "{{ vllm_models_dir }}/configs/{{ item.name }}.yaml"
+  loop: "{{ vllm_layouts }}"
+  loop_control:
+    label: "{{ item.name }} <- {{ vllm_layout_default_model[item.name] }}"
 
 # ══════════════════════════════════════════════════════════════
 # PART 2: Surya systemd unit + firewall + quadlet install/validate
@@ -129,17 +148,31 @@
     - surya_ocr_enabled | bool
     - not ansible_check_mode
 
-# ── vLLM Quadlet unit files (generator turns these into services) ──
-- name: "Write vLLM Quadlet unit(s)"
+# ── vLLM Quadlet layout unit files (generator turns these into services) ──
+# One unit per LAYOUT (vllm-1gpu / vllm-2gpu), not per model.
+- name: "Write vLLM Quadlet layout unit(s)"
   ansible.builtin.template:
     src: vllm.container.j2
     dest: "{{ quadlet_dir }}/vllm-{{ item.name }}.container"
     owner: root
     group: root
     mode: "0644"
-  loop: "{{ vllm_instances }}"
+  loop: "{{ vllm_layouts }}"
   loop_control:
     label: "{{ item.name }}"
+  notify: Reload systemd
+
+# ── Remove obsolete per-model unit(s) replaced by the layout units ──
+# Pre-refactor deploys generated vllm-<model>.container (e.g. vllm-qwen14b-awq),
+# which the Quadlet generator turned into vllm-<model>.service. The layout refactor
+# replaces those with vllm-1gpu / vllm-2gpu — drop the stale file so no phantom
+# service lingers. Idempotent (absent): changed once, then ok forever.
+- name: "Remove obsolete per-model Quadlet unit file(s)"
+  ansible.builtin.file:
+    path: "{{ quadlet_dir }}/vllm-{{ item }}.container"
+    state: absent
+  loop:
+    - qwen14b-awq
   notify: Reload systemd
 
 # ── Firewall: additive scoped allow rules for the managed ports ──
@@ -160,11 +193,11 @@
   when: not ansible_check_mode
 
 # ── Validate: unit files on disk + generated services known to systemd ──
-- name: "Confirm Quadlet unit file(s) written"
+- name: "Confirm Quadlet layout unit file(s) written"
   ansible.builtin.stat:
     path: "{{ quadlet_dir }}/vllm-{{ item.name }}.container"
   register: _vllm_quadlet_stat
-  loop: "{{ vllm_instances }}"
+  loop: "{{ vllm_layouts }}"
   loop_control:
     label: "{{ item.name }}"
   when: not ansible_check_mode

@@ -1,8 +1,11 @@
 # Managed by Ansible — do not edit manually
-# Platform: colossus-llm1 | Instance: {{ item.name }} | Image: {{ vllm_image }}
+# Platform: colossus-llm1 | Layout: {{ item.name }} | Image: {{ vllm_image }}
+# Generic GPU-layout unit: serves whatever config sits at the fixed path
+# /models/configs/{{ item.name }}.yaml. Model is chosen by cp-ing a per-model
+# config onto that path + restarting — the unit itself is model-agnostic.
 
 [Unit]
-Description=vLLM {{ item.name }} ({{ item.model_repo }} @ {{ item.revision[:12] }})
+Description=vLLM {{ item.name }} layout (serves /models/configs/{{ item.name }}.yaml)
 After=network-online.target
 Wants=network-online.target
 

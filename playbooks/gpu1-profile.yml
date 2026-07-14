@@ -70,14 +70,14 @@
       when: not ansible_check_mode
 
     # ── Health-wait: each started unit serves /health on its port ──
-    # vLLM ports come from vllm_instances; surya from surya_ocr_port.
-    # Model load into VRAM can take 1-3 min, so retry generously.
+    # vLLM layout units (vllm-1gpu / vllm-2gpu) all serve vllm_port; surya from
+    # surya_ocr_port. Model load into VRAM can take 1-3 min, so retry generously.
     - name: "Build port map for health checks"
       ansible.builtin.set_fact:
         _health_ports: >-
           {{ dict(
-               (vllm_instances | map(attribute='name') | map('regex_replace', '^', 'vllm-') | list
-                | zip(vllm_instances | map(attribute='port') | list))
+               (vllm_layouts | map(attribute='name') | map('regex_replace', '^', 'vllm-') | list
+                | zip([vllm_port] * (vllm_layouts | length)))
              ) | combine({'surya-ocr': surya_ocr_port}) }}
 
     - name: "Wait for started units to report healthy"

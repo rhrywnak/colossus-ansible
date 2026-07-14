@@ -33,7 +33,7 @@ vllm_firewall_source_subnets:
   - "10.10.0.0/24"
 # Ports opened to those subnets. WebUI port included only when enabled.
 vllm_firewall_ports:
-  - "{{ vllm_instances[0].port }}"   # 8001 vLLM
+  - "{{ vllm_port }}"                # 8001 vLLM (both layout units; one runs at a time)
   - "{{ surya_ocr_port }}"           # 8340 Surya
 
 # ── Boot-restore (Option A): paths for the local reconciler ──
