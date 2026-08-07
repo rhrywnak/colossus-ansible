@@ -1,0 +1,19 @@
+---
+# VM-317: files1 — Filebrowser external file gateway (pve-3)
+# Usage: ansible-playbook playbooks/create-vm.yml -l pve-3 -e @vars/vm-317-files1.yml
+#
+# Butane config: ~/Projects/colossus-homelab/butane/files1.bu
+# Design doc:    DOCUMENTS/DESIGN/COLOSSUS_EXTERNAL_FILESHARE_DESIGN_v1.md
+#
+# NO virtiofs shares: this VM's data comes from TrueNAS over NFSv4
+# (export id 13, /mnt/Pool-1/user-share, read-only, pinned to 10.10.100.59).
+# Static IP is set in Butane/Ignition, not here — CoreOS owns its own network.
+vm_id: 317
+vm_name: files1
+vm_ignition: files1.ign
+vm_cores: 2
+vm_memory: 2048
+vm_disk_grow: "+8G"
+vm_storage: local-lvm
+
+vm_virtiofs_shares: []
