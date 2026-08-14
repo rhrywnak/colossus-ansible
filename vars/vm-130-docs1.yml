@@ -1,0 +1,29 @@
+---
+# VM-130: docs1 — Paperless-ngx canonical document store (pve-1)
+# Run via SEMAPHORE (infra control node), not build1:
+#   playbooks/create-vm.yml -e @vars/vm-130-docs1.yml --limit pve-1
+#
+# Butane config: ~/Projects/colossus-homelab/butane/docs1.bu
+# Spec:          DOCUMENTS/DESIGN/COLOSSUS_PAPERLESS_INFRASTRUCTURE_SPEC_v1.md
+#
+# NO virtiofs: storage comes from TrueNAS over NFSv4 (exports 13 and 14, both
+# pinned to 10.10.100.130). Static IP is set in Butane/Ignition — CoreOS owns
+# its own network config.
+#
+# Sizing rationale: 4 vCPU because OCR is CPU-bound (Tesseract; no GPU path
+# exists in Paperless). 6 GB RAM covers the Tika JVM plus OCR bursts. Disk is
+# local application state only (SQLite + Whoosh index) plus four container
+# images (~2 GB); the documents themselves live on TrueNAS.
+#
+# CPU contention: pve-1 also runs colossus-legal PROD and build1. Set CPUWeight=
+# on the Paperless Quadlet units in Stage E so PROD and build1 win under
+# contention — OCR taking longer is invisible, PROD slowing down is not.
+vm_id: 130
+vm_name: docs1
+vm_ignition: docs1.ign
+vm_cores: 4
+vm_memory: 6144
+vm_disk_grow: "+30G"
+vm_storage: local-lvm
+
+vm_virtiofs_shares: []
