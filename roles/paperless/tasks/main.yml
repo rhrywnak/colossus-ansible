@@ -10,6 +10,57 @@
 # This role does NOT start the containers. Enabling and starting is the
 # playbook's job, after validation — see playbooks/deploy-paperless.yml.
 
+# ── Guard: the render-only overrides must never reach a real host ────
+# These three variables exist so the units can be rendered on a workstation
+# that has neither root nor systemd (see the header of deploy-paperless.yml).
+# Used against docs1 they are silently destructive in the worst way:
+# paperless_manage_services=false writes every unit, skips the daemon-reload,
+# starts nothing, and reports failed=0. That is a success that isn't — the
+# same class as PAPERLESS_CONSUMER_POLLING (E-2) and the root-mode chown
+# (Issue #11). A comment does not stop it; a failed play does.
+#
+# Ordered before the vault bind so the play dies before it touches anything.
+
+- name: "Guard: paperless_set_ownership must be true against a real host"
+  ansible.builtin.assert:
+    that:
+      - paperless_set_ownership | bool
+    fail_msg: >-
+      paperless_set_ownership is false while targeting '{{ inventory_hostname }}'.
+      That override exists only for the local Quadlet render on localhost. Against
+      a real host it leaves the Quadlet units, the env file and the data directory
+      with whatever ownership they happen to inherit — the env file holding
+      PAPERLESS_SECRET_KEY among them. Drop the override, or target localhost.
+    success_msg: "paperless_set_ownership=true"
+    quiet: true
+  when: inventory_hostname != 'localhost'
+
+- name: "Guard: paperless_manage_services must be true against a real host"
+  ansible.builtin.assert:
+    that:
+      - paperless_manage_services | bool
+    fail_msg: >-
+      paperless_manage_services is false while targeting '{{ inventory_hostname }}'.
+      That override exists only for the local Quadlet render on localhost. Against
+      a real host it writes every unit, skips the systemd daemon-reload, starts
+      nothing, skips the generator assertion — and still reports failed=0. Drop the
+      override, or target localhost.
+    success_msg: "paperless_manage_services=true"
+    quiet: true
+  when: inventory_hostname != 'localhost'
+
+- name: "Guard: paperless_target may only be the inventory group or localhost"
+  ansible.builtin.assert:
+    that:
+      - (paperless_target | default('docs_vms')) in ['docs_vms', 'localhost']
+    fail_msg: >-
+      paperless_target is '{{ paperless_target | default('docs_vms') }}'. It exists
+      only to retarget the play at localhost for the local render; a real deploy
+      uses the default 'docs_vms'. Pointing it anywhere else deploys Paperless to a
+      host this role was not written for.
+    success_msg: "paperless_target={{ paperless_target | default('docs_vms') }}"
+    quiet: true
+
 # ── Bind the vault secret (house pattern: set_fact + no_log) ──────────
 - name: "Set Paperless secret key"
   ansible.builtin.set_fact:

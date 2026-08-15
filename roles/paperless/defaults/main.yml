@@ -121,8 +121,16 @@ paperless_app_cpuweight: 60
 paperless_helper_cpuweight: 40
 
 # ── Render/validation knobs ──────────────────────────────────────────
-# Both true for a real deploy. The local Quadlet render (plan Step 5) sets
-# them false so the units can be written on a workstation that has neither
-# root nor systemd. Never set false against docs1.
+# Both true for a real deploy. The local Quadlet render sets them false so the
+# units can be written on a workstation that has neither root nor systemd —
+# see the header of playbooks/deploy-paperless.yml for the command.
+#
+# This is NOT enforced by comment. tasks/main.yml opens with three guards that
+# fail the play if either of these is false, or if paperless_target is anything
+# other than docs_vms/localhost, whenever the target is not localhost.
+#
+# The guard exists because the failure mode is silent, not loud:
+# paperless_manage_services=false against docs1 writes every unit, skips the
+# daemon-reload, starts nothing — and reports failed=0.
 paperless_set_ownership: true
 paperless_manage_services: true
