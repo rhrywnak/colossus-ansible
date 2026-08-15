@@ -120,6 +120,43 @@ paperless_consumer_stability_delay: 15
 paperless_app_cpuweight: 60
 paperless_helper_cpuweight: 40
 
+# ── Authentik OIDC (SSO) ─────────────────────────────────────────────
+# Paperless authenticates against Authentik DIRECTLY via OpenID Connect.
+# It does NOT sit behind Traefik ForwardAuth, and PAPERLESS_ENABLE_HTTP_REMOTE_USER
+# is never set: header trust would mean Paperless believes whatever username
+# header arrives, and port 8000 is directly reachable on the LAN. OIDC is safe
+# regardless of who can reach the port.
+#
+# The Traefik route for docs.cogmai.com is deliberately protected: false —
+# ForwardAuth plus in-app OIDC is two logins for one session.
+paperless_oidc_enabled: true
+
+# provider_id is load-bearing: it is the path segment in the callback URL that
+# Authentik has registered as a STRICT redirect URI. Changing it here without
+# changing it in Authentik breaks login.
+#   https://docs.cogmai.com/accounts/oidc/{{ paperless_oidc_provider_id }}/login/callback/
+paperless_oidc_provider_id: "authentik"
+paperless_oidc_display_name: "Authentik"
+
+# Must match the Authentik APPLICATION slug — it appears in the discovery URL.
+paperless_oidc_app_slug: "paperless"
+
+# Use the PUBLIC https URL, never http://10.10.100.58:9000. Authentik derives the
+# endpoints it advertises from the request Host, and authorization_endpoint is
+# where the user's BROWSER gets sent. Verified from inside the container: it
+# resolves auth.cogmai.com -> 10.10.100.55 (Traefik) and validates the LE cert.
+paperless_oidc_server_url: "https://auth.cogmai.com/application/o/{{ paperless_oidc_app_slug }}/.well-known/openid-configuration"
+
+# Chuck and Marie provision on first login and never hold a local password.
+# Pre-creating would not help: a pre-created local user is still unlinked, so the
+# first OIDC login would create a duplicate anyway.
+#
+# Nobody gets staff or superuser. paperless/adapter.py grants those only when
+# User.objects.exclude(...).count() == 0 AND there are no documents — `roman`
+# exists, so that branch cannot fire.
+paperless_social_auto_signup: true
+paperless_social_account_default_groups: []
+
 # ── Render/validation knobs ──────────────────────────────────────────
 # Both true for a real deploy. The local Quadlet render sets them false so the
 # units can be written on a workstation that has neither root nor systemd —

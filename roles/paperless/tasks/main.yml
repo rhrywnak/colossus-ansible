@@ -80,6 +80,44 @@
       Add it to inventory/group_vars/all/vault.yml — see plan Step 2.
     success_msg: "Secret key present, length OK"
 
+# ── Authentik OIDC provider configuration ────────────────────────────
+# Built as a dict and passed through to_json rather than hand-written JSON in
+# the template. A stray quote in a hand-written blob is not a cosmetic problem:
+# PAPERLESS_SOCIALACCOUNT_PROVIDERS is json.loads()'d at Django settings import,
+# so a malformed value fails the import, crash-loops paperless-app, and takes
+# LOCAL BREAK-GLASS LOGIN DOWN WITH IT. to_json cannot emit invalid JSON.
+- name: "Build the Authentik OIDC provider configuration"
+  ansible.builtin.set_fact:
+    _paperless_oidc_providers_json: "{{ {'openid_connect': {'APPS': [{
+      'provider_id': paperless_oidc_provider_id,
+      'name': paperless_oidc_display_name,
+      'client_id': vault_paperless_oidc_client_id,
+      'secret': vault_paperless_oidc_client_secret,
+      'settings': {'server_url': paperless_oidc_server_url},
+      }]}} | to_json }}"
+  no_log: true
+  when: paperless_oidc_enabled | bool
+
+# Belt and braces on the above. Asserts on SHAPE only — the failure message
+# names no values, so this stays diagnosable without leaking the client secret.
+- name: "Guard: the OIDC provider JSON must parse to the expected shape"
+  ansible.builtin.assert:
+    that:
+      - (_paperless_oidc_providers_json | from_json) is mapping
+      - (_paperless_oidc_providers_json | from_json).openid_connect.APPS | length == 1
+      - (_paperless_oidc_providers_json | from_json).openid_connect.APPS[0].provider_id | length > 0
+      - (_paperless_oidc_providers_json | from_json).openid_connect.APPS[0].client_id | length > 0
+      - (_paperless_oidc_providers_json | from_json).openid_connect.APPS[0].secret | length > 0
+    fail_msg: >-
+      PAPERLESS_SOCIALACCOUNT_PROVIDERS did not build into the expected shape.
+      Deploying it would fail Django settings import and crash-loop paperless-app,
+      taking local break-glass login down with it. Check that
+      vault_paperless_oidc_client_id and vault_paperless_oidc_client_secret are
+      set in inventory/group_vars/all/vault.yml.
+    success_msg: "OIDC provider JSON parses; one APP entry, id/secret non-empty"
+    quiet: true
+  when: paperless_oidc_enabled | bool
+
 # ── Directories ──────────────────────────────────────────────────────
 # docs1.bu already creates the state dirs, but owning them here makes the
 # contract explicit and keeps the role correct if the Butane ever drifts.

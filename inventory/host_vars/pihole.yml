@@ -37,5 +37,11 @@ pihole_dns_records:
   # ── Monitoring ────────────────────────────────────────────
   - "10.10.100.55 observe.cogmai.com observe"
 
+  # ── Document store (via Traefik) ──────────────────────────
+  # Points at Traefik, NOT at VM-130 directly: the OIDC redirect URI registered
+  # in Authentik is https://docs.cogmai.com/..., which needs the TLS front end.
+  # http://10.10.100.130:8000 remains the direct break-glass path.
+  - "10.10.100.55 docs.cogmai.com docs"
+
 # Beszel monitoring agent
 beszel_agent_token: "{{ vault_beszel_agent_token_pihole }}"

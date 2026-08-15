@@ -95,5 +95,25 @@ traefik_routes:
     external: false
     protected: false
 
+  # -- Paperless document store (VM-130 docs1) --
+  # protected: false is DELIBERATE, not an oversight. Paperless authenticates
+  # against Authentik itself via OIDC. ForwardAuth here would mean two logins
+  # for one session, and header trust is meaningless anyway while port 8000 is
+  # directly reachable on the LAN.
+  #
+  # external: false keeps this LAN-only. The Cloudflare tunnel ingress is a
+  # list of five explicit hostnames plus a 404 catch-all — there is no
+  # wildcard, so docs.cogmai.com would 404 at the edge regardless. Public
+  # access needs a per-hostname entry in the Zero Trust dashboard AND a DNS
+  # record (P-50).
+  #
+  # TLS needs nothing extra: every HTTPS router this template emits carries the
+  # *.cogmai.com wildcard certificate.
+  - name: docs
+    host: "docs.{{ domain }}"
+    backend_url: "http://10.10.100.130:8000"
+    external: false
+    protected: false
+
 # Beszel monitoring agent
 beszel_agent_token: "{{ vault_beszel_agent_token_traefik }}"
