@@ -12,12 +12,15 @@
 #
 # Sizing rationale: 4 vCPU because OCR is CPU-bound (Tesseract; no GPU path
 # exists in Paperless). 6 GB RAM covers the Tika JVM plus OCR bursts. Disk is
-# local application state only (SQLite + Whoosh index) plus four container
+# local application state only (SQLite + tantivy index) plus four container
 # images (~2 GB); the documents themselves live on TrueNAS.
 #
-# CPU contention: pve-1 also runs colossus-legal PROD and build1. Set CPUWeight=
-# on the Paperless Quadlet units in Stage E so PROD and build1 win under
-# contention — OCR taking longer is invisible, PROD slowing down is not.
+# CPU contention: pve-1 also runs colossus-legal PROD (VM-120) and build1
+# (VM-230). Those are SEPARATE VMs, so a systemd CPUWeight= inside VM-130
+# cannot influence them — it only ranks Paperless's own containers against one
+# another. The lever that works at this layer is Proxmox cpuunits, set below:
+# 50 against their default 100, so PROD and build1 win contention 2:1.
+# OCR taking longer is invisible; PROD slowing down is not.
 vm_id: 130
 vm_name: docs1
 vm_ignition: docs1.ign
@@ -25,5 +28,6 @@ vm_cores: 4
 vm_memory: 6144
 vm_disk_grow: "+30G"
 vm_storage: local-lvm
+vm_cpuunits: 50
 
 vm_virtiofs_shares: []
