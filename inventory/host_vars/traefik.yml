@@ -101,19 +101,51 @@ traefik_routes:
   # for one session, and header trust is meaningless anyway while port 8000 is
   # directly reachable on the LAN.
   #
-  # external: false keeps this LAN-only. The Cloudflare tunnel ingress is a
-  # list of five explicit hostnames plus a 404 catch-all — there is no
-  # wildcard, so docs.cogmai.com would 404 at the edge regardless. Public
-  # access needs a per-hostname entry in the Zero Trust dashboard AND a DNS
-  # record (P-50).
+  # external: true (P-50) publishes this through the Cloudflare tunnel. The
+  # tunnel ingress is a per-hostname list — there is no wildcard — so this also
+  # requires a public hostname entry in the Zero Trust dashboard plus a proxied
+  # CNAME to <tunnel-id>.cfargotunnel.com.
   #
   # TLS needs nothing extra: every HTTPS router this template emits carries the
-  # *.cogmai.com wildcard certificate.
+  # *.cogmai.com wildcard certificate. The HTTP router carries none, correctly —
+  # TLS terminates at Cloudflare and the tunnel speaks plain HTTP to :80.
+  #
+  # ── external_deny_rule ────────────────────────────────────────────────
+  # Because protected: false, an unauthenticated request from the internet
+  # reaches Paperless itself — including its LOCAL login endpoints, which
+  # bypass Authentik entirely. The local `roman` superuser is break-glass and
+  # must keep working on the LAN, but it should not be a credential anyone on
+  # the internet can submit against.
+  #
+  # All external traffic arrives on the `http` entrypoint (cloudflared ->
+  # 10.10.100.55:80); LAN browsers arrive on `https`. So denying these POSTs on
+  # `http` only closes the local door to the internet and leaves LAN break-glass
+  # untouched.
+  #
+  # The four paths were enumerated from paperless/urls.py and probed live —
+  # every one accepts a username/password POST:
+  #   /accounts/login/                        the login form (CSRF-gated)
+  #   /api/auth/login/                        same allauth view, mounted under api/
+  #   /api/token/                             DRF obtain-auth-token — NOT CSRF-gated,
+  #                                           returns a long-lived API token
+  #   /auth/headless/{browser,app}/v1/auth/login   allauth headless JSON login
+  #
+  # GET is deliberately NOT blocked: the login page must still render so
+  # external users can click "Sign in with Authentik". Verified against the live
+  # page — the SSO button POSTs to /accounts/oidc/authentik/login/, a different
+  # path, so the SSO flow is unaffected.
   - name: docs
     host: "docs.{{ domain }}"
     backend_url: "http://10.10.100.130:8000"
-    external: false
+    external: true
     protected: false
+    external_deny_rule: >-
+      Method(`POST`) && (
+      Path(`/accounts/login/`)
+      || Path(`/api/auth/login/`)
+      || Path(`/api/token/`)
+      || PathRegexp(`^/auth/headless/(browser|app)/v[0-9]+/auth/login$`)
+      )
 
 # Beszel monitoring agent
 beszel_agent_token: "{{ vault_beszel_agent_token_traefik }}"

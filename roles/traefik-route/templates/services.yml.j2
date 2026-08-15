@@ -29,6 +29,18 @@ http:
           - "{{ header }}"
 {% endfor %}
 {% endif %}
+{% if traefik_routes | selectattr('external_deny_rule', 'defined') | list | length > 0 %}
+
+    # Deny-all. Traefik has no native "reject" middleware, so this is the
+    # standard idiom: an ipAllowList whose source range no client can ever
+    # match (RFC 5737 TEST-NET-1, reserved for documentation). Any router
+    # carrying it returns 403 to every caller.
+    # Emitted only when at least one route defines external_deny_rule.
+    deny-all:
+      ipAllowList:
+        sourceRange:
+          - "192.0.2.1/32"
+{% endif %}
 
   # ==========================================================================
   # ROUTERS
@@ -46,6 +58,21 @@ http:
 {% if traefik_auth is defined and traefik_auth.enabled | default(false) and route.protected | default(false) %}
       middlewares:
         - {{ traefik_auth.name }}
+{% endif %}
+{% if route.external_deny_rule is defined %}
+
+    # Deny selected requests on the EXTERNAL path only.
+    # All tunnel traffic arrives on the `http` entrypoint; LAN browsers arrive
+    # on `https`. This router therefore applies to internet callers and not to
+    # the LAN. Priority 30 beats {{ route.name }}-http at 10.
+    {{ route.name }}-http-deny:
+      rule: "Host(`{{ route.host }}`) && ({{ route.external_deny_rule | trim }})"
+      entryPoints:
+        - http
+      service: {{ route.service | default(route.name) }}
+      priority: 30
+      middlewares:
+        - deny-all
 {% endif %}
 
 {% endfor %}
