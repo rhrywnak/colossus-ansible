@@ -1,0 +1,64 @@
+# Managed by Ansible — do not edit manually
+# Paperless-ngx {{ paperless_app_version }} — the application.
+#
+# 3.0.5, not 2.20.x: 3.0.0 landed 2026-07-22 with breaking changes and a new
+# search backend (tantivy, replacing Whoosh). Its rough edges are on the
+# UPGRADE path; this is a clean install with an empty corpus. 2.20.x gets no
+# further fixes, so shipping it would only defer the 2->3 migration onto a live
+# legal corpus.
+
+[Unit]
+Description=Paperless-ngx application ({{ paperless_app_version }})
+After=network-online.target paperless-broker.service paperless-tika.service paperless-gotenberg.service
+Wants=network-online.target
+Requires=paperless-broker.service paperless-tika.service paperless-gotenberg.service
+# /var/mnt, NOT /mnt. systemd does not resolve symlinks for mount-unit names,
+# so Quadlet's auto-generated RequiresMountsFor= (derived from the /mnt Volume=
+# paths below) matches nothing and is silently a no-op. These are the entries
+# that actually hold the start until the NFS mounts are up.
+RequiresMountsFor={{ paperless_required_mounts | join(' ') }}
+
+[Container]
+Image={{ paperless_app_image }}
+ContainerName=paperless-app
+Network={{ paperless_network_name }}.network
+
+# ⚠️ NON-ROOT. See defaults/main.yml before changing this.
+# USERMAP_UID / USERMAP_GID are deliberately NOT set: in root mode the image
+# chowns the consume folder, which SUCCEEDS over NFS and locks this host out of
+# its own intake folder, irrecoverably from the client side.
+User={{ paperless_uid }}
+Group={{ paperless_gid }}
+
+# The ONLY published port. 6379 / 9998 / 3000 stay on the container network.
+# Restricting 8000 to Traefik and the two permitted hosts is P-46 (Stage G).
+PublishPort={{ paperless_published_port }}:8000
+
+EnvironmentFile={{ app_env_dir }}/paperless.env
+
+# ── Storage split — non-negotiable (spec §5.1) ───────────────────────
+# LOCAL: SQLite + tantivy index + llm_index + classifier. SQLite file locking
+# over NFS corrupts. :Z relabels for SELinux and is correct here because this
+# is a local filesystem with xattr support.
+Volume={{ paperless_data_dir }}:/usr/src/paperless/data:Z
+#
+# NFS: NO :z / :Z. NFS has no xattr support, so a relabel fails exactly as it
+# does on virtiofs. These mounts already carry
+# context="system_u:object_r:container_file_t:s0" from docs1.bu.
+# Volume= uses /mnt (the symlink); RequiresMountsFor= above uses /var/mnt.
+Volume={{ paperless_media_volume }}:/usr/src/paperless/media
+Volume={{ paperless_export_volume }}:/usr/src/paperless/export
+Volume={{ paperless_consume_volume }}:/usr/src/paperless/consume
+
+NoNewPrivileges=true
+# DropCapability staged with the rest — see the broker unit.
+
+[Service]
+Restart=always
+RestartSec=10
+# First start runs database migrations and builds the search index.
+TimeoutStartSec=300
+CPUWeight={{ paperless_app_cpuweight }}
+
+[Install]
+WantedBy=multi-user.target

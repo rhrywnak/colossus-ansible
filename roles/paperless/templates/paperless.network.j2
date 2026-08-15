@@ -1,0 +1,21 @@
+# Managed by Ansible — do not edit manually
+# Quadlet .network unit. Requires Podman >= 5.0 (docs1 runs 5.8.4).
+#
+# A .network, not a pod (spec §4.2). In a pod all containers share one netns
+# and reach each other on localhost rather than by name; a network gives
+# upstream-identical DNS names, per-container port publishing (only the app
+# publishes), and independent restarts.
+#
+# Quadlet auto-injects Requires=/After=paperless-network.service into every
+# unit carrying Network=paperless.network, so the containers do not wire this
+# dependency by hand.
+
+[Unit]
+Description=Paperless-ngx internal container network
+
+[Network]
+NetworkName={{ paperless_network_name }}
+Driver=bridge
+
+[Install]
+WantedBy=multi-user.target

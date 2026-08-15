@@ -1,0 +1,20 @@
+---
+# roles/paperless/handlers/main.yml
+
+- name: "Reload systemd daemon"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when:
+    - not ansible_check_mode
+    - paperless_manage_services | bool
+
+# The env file is read at container start, not re-read live, so a changed
+# secret or setting needs a restart to take effect. Only fires when the file
+# actually changed.
+- name: "Restart paperless-app"
+  ansible.builtin.systemd:
+    name: paperless-app.service
+    state: restarted
+  when:
+    - not ansible_check_mode
+    - paperless_manage_services | default(true) | bool

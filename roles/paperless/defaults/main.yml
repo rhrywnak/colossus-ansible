@@ -1,0 +1,128 @@
+---
+# roles/paperless — Paperless-ngx on VM-130 (docs1)
+#
+# Spec:    DOCUMENTS/DESIGN/COLOSSUS_PAPERLESS_INFRASTRUCTURE_SPEC_v1.md
+# Tracker: COLOSSUS_PAPERLESS_EXECUTION_TASK_TRACKER_v2.md
+# Butane:  colossus-homelab/butane/docs1.bu  (VM, mounts, python — NOT the units)
+
+# ── Images: ALL pinned by digest, never :latest (P-25) ───────────────
+# Resolved live from the registries 2026-08-15. Every one is a multi-arch
+# index that includes linux/amd64, so these digests are arch-independent.
+#
+# To re-pin: `podman manifest inspect <ref>:<tag>` and replace the digest
+# here. This is a playbook run, NOT a VM rebuild — that is the whole
+# reason the units live in this role and not in docs1.bu.
+paperless_app_image: "ghcr.io/paperless-ngx/paperless-ngx@sha256:65a4cabf0169ea7fbd90ab7bb28ba3f8b5909613635acda1a03ad606f34b456b"
+paperless_broker_image: "docker.io/valkey/valkey@sha256:ee91f7a174ac4d6a6b0685b3a60e321f0a9dbbb691f9b0e285be2ba1d1be8328"
+paperless_tika_image: "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973"
+paperless_gotenberg_image: "docker.io/gotenberg/gotenberg@sha256:87c16b9f364279d321bc9772d31fa58aa6abe036423c270698bd636c3a8e9466"
+
+# Human-readable versions, for logs and the deployment record only.
+# These are NOT what podman pulls — the digests above are.
+paperless_app_version: "3.0.5"
+paperless_broker_version: "9.1.1-alpine"
+paperless_tika_version: "3.3.1.0"
+paperless_gotenberg_version: "8.36.0"
+
+# ── Container identity ⚠️ READ BEFORE CHANGING ───────────────────────
+# The container runs NON-ROOT as 3002:3001.
+#
+# Do NOT switch to root mode with USERMAP_UID/USERMAP_GID. Those variables
+# still work in 3.0.5, but in root mode the image's init-folders step runs
+#     find <dir> -not \( -user paperless -and -group paperless \) \
+#          -exec chown paperless:paperless {} +
+# over the consume folder. The NFS client is squashed to 3001 and therefore
+# OWNS those files, and ZFS/NFSv4 grants owner@ the WRITE_OWNER bit — so the
+# chown SUCCEEDS. The consume directory then belongs to 3002 while the client
+# is squashed to 3001, group@ is not honoured for squashed clients (Issue #5),
+# and VM-130 loses all access to its own intake folder. It cannot be undone
+# from the client; repair needs filesystem.chown on TrueNAS.
+#
+# Non-root mode has no chown branch at all — it only warns. Those warnings in
+# the journal are expected and correct, not a fault.
+#
+# Why 3002:3001 specifically: mapall squashes every client credential, so the
+# container uid is irrelevant on BOTH NFS mounts. It only has to satisfy the
+# LOCAL data dir, which Butane creates 3002:3001 mode 0770.
+paperless_uid: 3002
+paperless_gid: 3001
+
+# ── Host paths ───────────────────────────────────────────────────────
+# paperless_state_dir is overridable so the unit files can be rendered
+# locally for Quadlet validation without writing to /var (plan Step 5).
+paperless_state_dir: /var/lib/paperless
+paperless_data_dir: "{{ paperless_state_dir }}/data"
+
+# NOTE the /mnt vs /var/mnt asymmetry, and that it is deliberate:
+#   - mount units and RequiresMountsFor= use the canonical /var/mnt path
+#   - container Volume= lines use /mnt (the symlink)
+# Getting it backwards yields a silently empty mount.
+paperless_media_volume: /mnt/paperless/media
+paperless_export_volume: /mnt/paperless/export
+paperless_consume_volume: /mnt/usershare/paperless-consume
+
+# Mount units that must be up before paperless-app starts. /var/mnt, NOT /mnt:
+# systemd does not resolve symlinks for mount-unit names, so a
+# RequiresMountsFor=/mnt/... matches nothing and is silently a no-op.
+paperless_required_mounts:
+  - "{{ paperless_data_dir }}"
+  - /var/mnt/paperless
+  - /var/mnt/usershare
+
+# ── Networking ───────────────────────────────────────────────────────
+paperless_network_name: paperless
+paperless_published_port: 8000
+# Broker 6379, Tika 9998 and Gotenberg 3000 are NEVER published — they are
+# reachable only on the container network, by container name.
+paperless_broker_port: 6379
+paperless_tika_port: 9998
+paperless_gotenberg_port: 3000
+
+# Broker queue state. Podman named volume on VM-130 local disk (/dev/sda4),
+# therefore inside PBS scope. Holds Celery queue state only — no documents,
+# no database, no index. Persisted because losing an in-flight task means a
+# document consumed from intake but never indexed: present in media, absent
+# from search, with nothing to indicate it.
+paperless_broker_volume: paperless-broker-data
+
+# ── Application settings ─────────────────────────────────────────────
+paperless_url: "https://docs.cogmai.com"
+# PAPERLESS_URL alone does NOT restrict the Host header — PAPERLESS_ALLOWED_HOSTS
+# defaults to ["*"] and PAPERLESS_URL merely appends to it. Set explicitly.
+paperless_allowed_hosts: "docs.cogmai.com,10.10.100.130,localhost"
+paperless_time_zone: "America/Detroit"
+
+# SINGULAR. Never set PAPERLESS_OCR_LANGUAGES (plural) — that triggers
+# init-tesseract-langs to run apt-get install on every container start, and
+# in non-root mode it logs "ERROR: Unable to install language as non-root".
+paperless_ocr_language: "eng"
+
+# Capped rather than scaled to core count — pve-1 also runs colossus-legal
+# PROD and build1 (spec §3).
+paperless_task_workers: 2
+paperless_threads_per_worker: 1
+paperless_webserver_workers: 1
+
+# ⚠️ The variable is PAPERLESS_CONSUMER_POLLING_INTERVAL. The shorter
+# PAPERLESS_CONSUMER_POLLING does not exist in 3.0.5 — setting it is accepted
+# silently and leaves inotify active, which is unreliable over NFS. That is a
+# silent false negative on intake, not an error.
+paperless_consumer_polling_interval: 60
+# How long a file must stop changing before ingest. Default is 5s; raised for
+# files arriving via SMB -> ZFS -> NFS.
+paperless_consumer_stability_delay: 15
+
+# ── Resource priority ────────────────────────────────────────────────
+# CPUWeight only arbitrates cgroups INSIDE VM-130 — it ranks Tika and
+# Gotenberg below the app. It cannot make colossus-legal PROD (VM-120) or
+# build1 (VM-230) win, because those are separate VMs; that is Proxmox
+# cpuunits, set to 50 in vars/vm-130-docs1.yml.
+paperless_app_cpuweight: 60
+paperless_helper_cpuweight: 40
+
+# ── Render/validation knobs ──────────────────────────────────────────
+# Both true for a real deploy. The local Quadlet render (plan Step 5) sets
+# them false so the units can be written on a workstation that has neither
+# root nor systemd. Never set false against docs1.
+paperless_set_ownership: true
+paperless_manage_services: true

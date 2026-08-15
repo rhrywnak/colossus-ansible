@@ -1,0 +1,87 @@
+---
+# playbooks/deploy-paperless.yml
+#
+# Deploy Paperless-ngx to VM-130 (docs1) as four Quadlet containers on a
+# Quadlet .network.
+#
+# Runs from SEMAPHORE (template "Deploy Paperless (VM-130 docs1)"), with the
+# vault explicitly attached — group_vars/all/vault.yml loads for every host
+# regardless of whether the playbook uses vault vars, so without it the run
+# dies on "Attempting to decrypt but no vault secrets found" (Issue #2).
+#
+# Usage:
+#   ansible-playbook playbooks/deploy-paperless.yml \
+#     --vault-password-file ~/.vault_pass
+#
+#   # Dry run
+#   ansible-playbook playbooks/deploy-paperless.yml --check --diff \
+#     --vault-password-file ~/.vault_pass
+#
+# ⚠️ NEVER run this with -vvv. Verbose mode renders template content —
+# including PAPERLESS_SECRET_KEY — into the log, and Semaphore persists task
+# logs where anyone with Semaphore access can read them.
+#
+# LOCAL RENDER for Quadlet validation (plan Step 5) — writes the real bytes
+# without touching docs1:
+#
+#   ansible-playbook playbooks/deploy-paperless.yml \
+#     -i inventory/hosts.yml -i localhost, \
+#     -c local -e paperless_target=localhost -e ansible_become=false \
+#     -e quadlet_dir=/tmp/qrender -e app_env_dir=/tmp/qrender-env \
+#     -e paperless_state_dir=/tmp/qrender-state \
+#     -e paperless_set_ownership=false -e paperless_manage_services=false \
+#     --vault-password-file ~/.vault_pass
+#
+#   BOTH inventory sources are required: `-i localhost,` alone replaces the
+#   inventory, so inventory/group_vars/all/vault.yml never loads and the run
+#   dies on "'vault_paperless_secret_key' is undefined".
+#
+#   Then IMMEDIATELY: rm -rf /tmp/qrender-env
+#   That directory holds the real secret key in plaintext.
+
+- name: "Deploy Paperless-ngx"
+  # Defaults to the inventory group. Overridable only so the units can be
+  # rendered locally for validation (see above) — never in a real deploy.
+  hosts: "{{ paperless_target | default('docs_vms') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: "Show what is being deployed"
+      ansible.builtin.debug:
+        msg: >-
+          Paperless-ngx {{ paperless_app_version }} -> {{ inventory_hostname }}.
+          app={{ paperless_app_image.split('@')[1][:19] }}…
+          Container identity {{ paperless_uid }}:{{ paperless_gid }} (non-root).
+
+  roles:
+    - paperless
+
+  post_tasks:
+    # Enabling and starting is deliberately separate from writing the units,
+    # so a validation failure inside the role never leaves half-started
+    # containers behind. Order matters: dependencies before the app.
+    - name: "Enable and start Paperless services"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - paperless-network.service
+        - paperless-broker.service
+        - paperless-tika.service
+        - paperless-gotenberg.service
+        - paperless-app.service
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - not ansible_check_mode
+        - paperless_manage_services | default(true) | bool
+
+    - name: "Next steps"
+      ansible.builtin.debug:
+        msg: >-
+          Units written and started. This is NOT success — run plan Step 9
+          (feature verification) and Step 9b (end-to-end ingest smoke test).
+          Port 8000 is LAN-open until P-46: the corpus stays empty until it
+          passes.

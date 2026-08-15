@@ -1,0 +1,54 @@
+# Managed by Ansible — do not edit manually
+# Gotenberg {{ paperless_gotenberg_version }} — Office->PDF, and the Chromium
+# route that renders .eml.
+#
+# Ahead of upstream's 8.25 deliberately: its Chromium is what renders opposing
+# counsel's email, which makes an outdated renderer the live risk rather than a
+# theoretical one.
+
+[Unit]
+Description=Paperless Gotenberg ({{ paperless_gotenberg_version }})
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image={{ paperless_gotenberg_image }}
+ContainerName=paperless-gotenberg
+Network={{ paperless_network_name }}.network
+
+# ⚠️ MANDATORY HARDENING — spec §4.4. Do not remove, reorder or "simplify".
+#
+# Gotenberg's Chromium route renders .eml files. Without these flags, ingesting
+# opposing counsel's email means tracking pixels phone home and JavaScript
+# executes, disclosing when the message was processed. In litigation that is an
+# information leak, not a nuisance.
+#
+# Which flag does the work: Gotenberg's DEFAULT deny-list is
+#     ^file:(?!//\/tmp/).*
+# — verified against this image with `gotenberg --help`. It blocks stray file:
+# URLs and says NOTHING about http: or https:. It is the ALLOW-LIST that
+# confines Chromium to local files and therefore stops the outbound request.
+# The defaults do not cover this.
+#
+# The image ENTRYPOINT is `/usr/bin/tini --` and its CMD is `gotenberg`, so
+# Exec= replaces CMD and must repeat the binary name — exactly as upstream's
+# compose `command:` does.
+Exec=gotenberg --chromium-disable-javascript=true --chromium-allow-list=file:///tmp/.*
+
+# NOT published. Reachable only as paperless-gotenberg:{{ paperless_gotenberg_port }}
+# on the container network.
+
+# Image already runs as the unprivileged `gotenberg` user.
+NoNewPrivileges=true
+# DropCapability deliberately NOT set yet: Chromium sandboxing interacts with
+# no-new-privileges, and tightening blind risks breaking the exact conversion
+# path §4.4 depends on. Tighten after P-43 proves .eml ingest, and re-run P-45
+# afterwards.
+
+[Service]
+Restart=always
+RestartSec=10
+CPUWeight={{ paperless_helper_cpuweight }}
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,33 @@
+# Managed by Ansible — do not edit manually
+# Apache Tika {{ paperless_tika_version }} — Office content and metadata extraction.
+#
+# Standard image, NOT -full: -full adds scientific formats, GDAL and OCR models
+# this deployment never calls, on the largest Java parser surface in the stack.
+# 4.0.0 exists only as beta/snapshot — not in a legal store.
+# Upstream's own compose uses apache/tika:latest; do not copy that.
+
+[Unit]
+Description=Paperless Tika ({{ paperless_tika_version }})
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image={{ paperless_tika_image }}
+ContainerName=paperless-tika
+Network={{ paperless_network_name }}.network
+
+# NOT published. Reachable only as paperless-tika:{{ paperless_tika_port }}
+# on the container network.
+
+NoNewPrivileges=true
+# DropCapability staged — see the broker unit.
+
+[Service]
+Restart=always
+RestartSec=10
+# The JVM is the heaviest thing on this host and the least latency-sensitive.
+CPUWeight={{ paperless_helper_cpuweight }}
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

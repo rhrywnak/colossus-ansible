@@ -1,0 +1,38 @@
+# Managed by Ansible — do not edit manually
+# Celery broker + websocket channel layer. valkey {{ paperless_broker_version }}.
+#
+# Documented divergence from upstream, which still ships redis:8. valkey is
+# wire-compatible and Paperless uses the broker only as a Celery transport and
+# channel layer — no Redis-specific modules. If broker behaviour is ever
+# suspect, swapping this one image line back to redis is the first thing to try.
+
+[Unit]
+Description=Paperless broker (valkey {{ paperless_broker_version }})
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image={{ paperless_broker_image }}
+ContainerName=paperless-broker
+Network={{ paperless_network_name }}.network
+
+# Queue state on VM-130 local disk, inside PBS scope. No documents, no
+# database, no index. Persisted so a broker restart does not silently strand
+# a document that was consumed from intake but not yet indexed.
+Volume={{ paperless_broker_volume }}:/data
+
+# NOT published. Reachable only as paperless-broker:{{ paperless_broker_port }}
+# on the container network.
+
+NoNewPrivileges=true
+# DropCapability is deliberately NOT set yet — the valkey entrypoint starts as
+# root and drops to the valkey user, which needs SETUID/SETGID. Tightening is
+# staged per container after the pipeline is proven (P-43).
+
+[Service]
+Restart=always
+RestartSec=10
+CPUWeight={{ paperless_helper_cpuweight }}
+
+[Install]
+WantedBy=multi-user.target

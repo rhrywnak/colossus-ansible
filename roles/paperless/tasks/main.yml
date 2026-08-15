@@ -1,0 +1,163 @@
+---
+# roles/paperless/tasks/main.yml
+#
+# Writes the Quadlet .network + four .container units and the environment
+# file, then reloads systemd so the Quadlet generator emits the services.
+#
+# Shape follows roles/colossus-legal/: vault secret bound via set_fact +
+# no_log, env file to {{ app_env_dir }} at 0600, units to {{ quadlet_dir }}.
+#
+# This role does NOT start the containers. Enabling and starting is the
+# playbook's job, after validation — see playbooks/deploy-paperless.yml.
+
+# ── Bind the vault secret (house pattern: set_fact + no_log) ──────────
+- name: "Set Paperless secret key"
+  ansible.builtin.set_fact:
+    _paperless_secret_key: "{{ vault_paperless_secret_key }}"
+  no_log: true
+
+# Asserts on length only. The failure message shows the CONDITION text, never
+# the value, so this is safe to leave un-no_log'd — and a diagnosable failure
+# is worth more than a silent one.
+- name: "Assert the secret key is present and long enough"
+  ansible.builtin.assert:
+    that:
+      - vault_paperless_secret_key is defined
+      - (vault_paperless_secret_key | length) >= 64
+    fail_msg: >-
+      vault_paperless_secret_key is missing or under 64 characters.
+      Add it to inventory/group_vars/all/vault.yml — see plan Step 2.
+    success_msg: "Secret key present, length OK"
+
+# ── Directories ──────────────────────────────────────────────────────
+# docs1.bu already creates the state dirs, but owning them here makes the
+# contract explicit and keeps the role correct if the Butane ever drifts.
+- name: "Ensure Paperless state directory exists"
+  ansible.builtin.file:
+    path: "{{ paperless_state_dir }}"
+    state: directory
+    owner: "{{ paperless_uid if paperless_set_ownership | bool else omit }}"
+    group: "{{ paperless_gid if paperless_set_ownership | bool else omit }}"
+    mode: "0755"
+
+# 0770 and owned by the container identity: this is the ONLY path where the
+# container uid matters. Both NFS mounts squash every client credential via
+# mapall, so the uid is irrelevant there.
+- name: "Ensure Paperless local data directory exists"
+  ansible.builtin.file:
+    path: "{{ paperless_data_dir }}"
+    state: directory
+    owner: "{{ paperless_uid if paperless_set_ownership | bool else omit }}"
+    group: "{{ paperless_gid if paperless_set_ownership | bool else omit }}"
+    mode: "0770"
+
+- name: "Ensure Quadlet and env directories exist"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ 'root' if paperless_set_ownership | bool else omit }}"
+    group: "{{ 'root' if paperless_set_ownership | bool else omit }}"
+    mode: "0755"
+  loop:
+    - "{{ quadlet_dir }}"
+    - "{{ app_env_dir }}"
+
+# ── Environment file (contains the secret key) ────────────────────────
+- name: "Write Paperless environment file"
+  ansible.builtin.template:
+    src: paperless.env.j2
+    dest: "{{ app_env_dir }}/paperless.env"
+    owner: "{{ 'root' if paperless_set_ownership | bool else omit }}"
+    group: "{{ 'root' if paperless_set_ownership | bool else omit }}"
+    mode: "0600"
+  no_log: true
+  notify: "Restart paperless-app"
+
+# ── Quadlet units ────────────────────────────────────────────────────
+# The .network first — Quadlet injects Requires=/After= on it into every
+# container that references it, so nothing starts before the network exists.
+- name: "Write Paperless Quadlet network unit"
+  ansible.builtin.template:
+    src: paperless.network.j2
+    dest: "{{ quadlet_dir }}/{{ paperless_network_name }}.network"
+    owner: "{{ 'root' if paperless_set_ownership | bool else omit }}"
+    group: "{{ 'root' if paperless_set_ownership | bool else omit }}"
+    mode: "0644"
+  notify: "Reload systemd daemon"
+
+- name: "Write Paperless Quadlet container units"
+  ansible.builtin.template:
+    src: "paperless-{{ item }}.container.j2"
+    dest: "{{ quadlet_dir }}/paperless-{{ item }}.container"
+    owner: "{{ 'root' if paperless_set_ownership | bool else omit }}"
+    group: "{{ 'root' if paperless_set_ownership | bool else omit }}"
+    mode: "0644"
+  loop:
+    - broker
+    - tika
+    - gotenberg
+    - app
+  loop_control:
+    label: "paperless-{{ item }}.container"
+  notify: "Reload systemd daemon"
+
+# ── Regenerate the systemd units from the Quadlet files ──────────────
+- name: "Reload systemd so the Quadlet generator emits the services"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when:
+    - not ansible_check_mode
+    - paperless_manage_services | bool
+
+# ── Validate: files on disk, and the generator actually produced services ──
+- name: "Stat the Quadlet unit files"
+  ansible.builtin.stat:
+    path: "{{ quadlet_dir }}/{{ item }}"
+  register: _paperless_unit_stat
+  loop:
+    - "{{ paperless_network_name }}.network"
+    - paperless-broker.container
+    - paperless-tika.container
+    - paperless-gotenberg.container
+    - paperless-app.container
+  loop_control:
+    label: "{{ item }}"
+  when: not ansible_check_mode
+
+- name: "Assert every Quadlet unit file was written"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.size > 0
+    fail_msg: "Quadlet unit missing or empty: {{ item.item }}"
+    success_msg: "Quadlet unit present: {{ item.item }}"
+  loop: "{{ _paperless_unit_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not ansible_check_mode
+
+# A .container file on disk is not a service. If the generator rejected a
+# directive it stays silent and the unit simply never appears — which would
+# otherwise surface as a confusing "unit not found" at start time.
+- name: "Confirm the Quadlet generator produced the systemd services"
+  ansible.builtin.command:
+    cmd: systemctl list-unit-files --no-legend paperless-app.service paperless-broker.service paperless-tika.service paperless-gotenberg.service paperless-network.service
+  register: _paperless_generated
+  changed_when: false
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - paperless_manage_services | bool
+
+- name: "Assert all five generated services are known to systemd"
+  ansible.builtin.assert:
+    that:
+      - _paperless_generated.stdout_lines | length == 5
+    fail_msg: >-
+      The Quadlet generator did not produce all five services (saw
+      {{ _paperless_generated.stdout_lines | default([]) | length }}).
+      A rejected directive fails silently — check `journalctl -t quadlet-generator`.
+    success_msg: "All five Quadlet-generated services are known to systemd"
+  when:
+    - not ansible_check_mode
+    - paperless_manage_services | bool
