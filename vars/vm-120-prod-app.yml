@@ -7,7 +7,20 @@ vm_name: colossus-prod-app1
 vm_ignition: colossus-prod-app1.ign
 vm_cores: 2
 vm_memory: 4096
-vm_disk_grow: "+40G"
+# Disk growth over the 10G CoreOS base image.
+#
+# CORRECTED 2026-08-16: this file said "+40G", which would have produced a 50G
+# disk on rebuild. The live disk is 30G. "+20G" reproduces what runs. The
+# discrepancy is recorded rather than erased — nothing says whether 50G was the
+# intent and the VM was undersized, or whether "+40G" was simply copied from
+# vars/vm-110-prod-db.yml. If 50G was intended, grow the live disk deliberately
+# and change this line to match; do not let the two disagree again.
+vm_disk_grow: "+20G"
+
+# Start on host boot. Matches live (onboot: 1). Expressible only since
+# roles/proxmox-vm gained vm_onboot support (D-9) — before that it was a
+# hand-run `qm set 120 --onboot 1` recorded nowhere.
+vm_onboot: 1
 
 # Guest CPU model. Codifies what VM-120 has been running since it was set by
 # hand: `cpu: host`. It is the proven configuration for this workload, so a
@@ -18,6 +31,36 @@ vm_disk_grow: "+40G"
 # mappings are node-scoped (node=pve-1), so VM-120 is pinned to pve-1 regardless
 # of CPU model.
 #
-# Until now this was live-only — the vars file said nothing, so a rebuild would
-# have silently dropped to Proxmox's kvm64 default. Same trap that bit VM-130.
+# WHY it was set to host is UNKNOWN. Nothing records it and the change predates
+# this repo's audit trail. Evidence that it was probably preference rather than a
+# forced fix: VM-220 (colossus-dev-app1) runs the SAME application version
+# (colossus-backend v2.0.0-beta.395) on kvm64 — an x86-64-v1 guest with no
+# sse4_2, popcnt, ssse3, sse4_1 or aes — and is healthy: /health returns 200 and
+# there are no SIGILL or illegal-instruction entries in seven days of journal.
+# So the workload does not appear to REQUIRE v2. Recorded as unknown rather than
+# guessed at.
+#
+# Until 2026-08-16 this was live-only — the vars file said nothing, so a rebuild
+# would have silently dropped to Proxmox's kvm64 default. Same trap that bit
+# VM-130.
 vm_cpu_type: host
+
+# virtiofs shares. These were attached by hand and were MISSING from this file.
+# A rebuild would have produced a VM-120 with no document and no model mounts,
+# and colossus-legal PROD would have come up healthy with an empty
+# /data/documents — silent, which is the dangerous kind of wrong.
+#
+# cache: auto is deliberate and is NOT the role default (always). Proxmox's
+# virtiofs cache default is `auto` (PVE/QemuServer/Virtiofs.pm), and VM-120's
+# live devices carry no cache parameter, so they are running auto. Writing the
+# role's `always` here would have silently changed PROD caching policy while
+# looking like faithful codification.
+#
+# The rendered config therefore reads `dirid=...,cache=auto` where the live VM
+# reads `dirid=...` with no cache: behaviourally identical, explicit rather than
+# relying on an invisible default. That one-line difference is expected.
+vm_virtiofs_shares:
+  - dirid: prod-legal-docs
+    cache: auto
+  - dirid: prod-models
+    cache: auto

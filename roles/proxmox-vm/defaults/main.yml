@@ -93,5 +93,24 @@ vm_virtiofs_shares: []
 # existing CoreOS VMs (which never set this) stay byte-identical.
 vm_agent_enabled: false
 
+# Start this VM automatically when the Proxmox host boots (Proxmox `onboot`).
+#
+# Closes D-9. The role never set this, so every VM in the fleet had it applied by
+# hand afterwards — and the manual step is easy to forget, which is why the
+# CoreOS runbook carried "qm set <id> --onboot 1" as a separate instruction.
+#
+# Defaults to 1 because that is what the fleet actually does: 9 of 10 VMs run
+# onboot=1, the exception being one stopped legacy VM. Proxmox's own `qm create`
+# default is 0, so this deliberately diverges from Proxmox to match house
+# practice. Set vm_onboot: 0 for a VM that should stay down across a host reboot.
+#
+# Distinct from vm_auto_start below: this controls HOST BOOT behaviour, not
+# whether the role powers the VM on at creation time.
+vm_onboot: 1
+
 # ── Post-creation ────────────────────────────────────────────
+# Whether the role powers the VM on immediately after creating it.
+# Deliberately false: a freshly created VM may carry another VM's static IP or
+# virtiofs mounts until its config is confirmed, so starting is always a separate,
+# deliberate act.
 vm_auto_start: false

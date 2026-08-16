@@ -8,3 +8,19 @@ vm_ignition: colossus-dev-app1.ign
 vm_cores: 2
 vm_memory: 4096
 vm_disk_grow: "+40G"
+
+# Guest CPU model. INERT until VM-220 is rebuilt — the running VM stays on
+# Proxmox's kvm64 default and is deliberately NOT being changed.
+#
+# Prevention, not a fix. VM-220 runs the same application as PROD
+# (colossus-backend v2.0.0-beta.395) and is currently HEALTHY on kvm64:
+# /health returns 200 and there are no SIGILL or illegal-instruction entries in
+# seven days of journal. But it is an x86-64-v1 guest — sse4_2, popcnt, ssse3,
+# sse4_1 and aes are all absent — so any future image pulling in a NumPy >= 2.0
+# wheel or a v2-only ONNX build will fail there exactly as it did on VM-130:
+# as random application errors, not as an obvious CPU fault.
+#
+# x86-64-v2-AES rather than `host`: DEV needs no host-specific features, and the
+# named model keeps the VM startable on any node. pve-2 is the AMD box, so `host`
+# would pin it there specifically.
+vm_cpu_type: x86-64-v2-AES

@@ -30,6 +30,12 @@ vm_disk_grow: "+30G"
 vm_storage: local-lvm
 vm_cpuunits: 50
 
+# Start on host boot. Matches live (onboot: 1). Expressible only since
+# roles/proxmox-vm gained vm_onboot support (D-9) — the deployment runbook's
+# manual "qm set 130 --onboot 1" step is now obsolete and should be dropped from
+# the rebuild loop.
+vm_onboot: 1
+
 # Guest CPU model. MUST be v2-or-better: the Paperless image's NumPy requires
 # x86-64-v2, and on Proxmox's kvm64 default it dies at import with an illegal
 # instruction — which surfaced as random ingest failures, not as a CPU fault.
