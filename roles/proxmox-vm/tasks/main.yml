@@ -254,6 +254,18 @@
       ansible.builtin.command:
         cmd: "qm set {{ vm_id }} --ciupgrade 0"
 
+    # Guest CPU model. Without this, Proxmox falls back to kvm64 (x86-64-v1),
+    # which fails any image requiring x86-64-v2 — as an illegal instruction at
+    # import, not as an obvious CPU fault. See defaults/main.yml for why the
+    # default is a named model and not `host`.
+    # Empty string → skipped, leaving the Proxmox default in place.
+    # The resolved value is in the task NAME on purpose: `command` renders no
+    # args in check mode, so the name is the only thing --check can show.
+    - name: "Set CPU type ({{ vm_cpu_type | default('unset') }})"
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --cpu {{ vm_cpu_type }}"
+      when: vm_cpu_type | length > 0
+
     # Relative CPU scheduling weight. Left at the default (100) → skipped, so
     # existing VMs are never reconfigured. Applies to both provision types.
     - name: "Set CPU scheduling weight (cpuunits)"

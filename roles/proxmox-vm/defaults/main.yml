@@ -27,6 +27,31 @@ vm_scsihw: virtio-scsi-pci
 # existing VMs are never touched.
 vm_cpuunits: 100
 
+# Guest CPU model.
+#
+# Proxmox's own default for `qm create` is kvm64 — an x86-64-v1 model with no
+# SSE4.2, POPCNT, SSSE3 or AES. Modern software increasingly treats x86-64-v2 as
+# a hard floor (NumPy >= 2.0 wheels, many ONNX builds), and on kvm64 it dies at
+# import with an illegal instruction. That presents as random application
+# errors rather than as a CPU problem, which is what made it expensive to find
+# on VM-130.
+#
+# x86-64-v2-AES is a NAMED model, deliberately not `host`. The three nodes are
+# different vendors — pve-1 Intel Arrow Lake, pve-2 AMD Zen 3, pve-3 Intel
+# Raptor Lake — so `host` pins a VM to the node it was built on and it will not
+# start elsewhere. All three clear v2 plus AES-NI, so this model starts anywhere
+# in the fleet. All three also clear v3, but nothing needs AVX2 and raising the
+# floor would constrain any node added later.
+#
+# Per-VM overrides:
+#   host        node-pinned VM that wants every host feature
+#   x86-64-v3   AVX2 workloads
+#   ""          skip the task entirely, leaving Proxmox's kvm64 default
+#
+# Applied at creation only — the whole create block is guarded by
+# `when: vm_exists.rc != 0`, so the role never reconfigures a running VM.
+vm_cpu_type: x86-64-v2-AES
+
 # ── Storage ──────────────────────────────────────────────────
 vm_storage: local-lvm
 vm_coreos_store_id: coreos

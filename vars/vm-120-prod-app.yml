@@ -8,3 +8,16 @@ vm_ignition: colossus-prod-app1.ign
 vm_cores: 2
 vm_memory: 4096
 vm_disk_grow: "+40G"
+
+# Guest CPU model. Codifies what VM-120 has been running since it was set by
+# hand: `cpu: host`. It is the proven configuration for this workload, so a
+# rebuild reproduces it rather than substituting an untested model.
+#
+# `host` normally costs portability, but there is none to preserve here: this VM
+# carries virtiofs0=prod-legal-docs and virtiofs1=prod-models, and cluster dir
+# mappings are node-scoped (node=pve-1), so VM-120 is pinned to pve-1 regardless
+# of CPU model.
+#
+# Until now this was live-only — the vars file said nothing, so a rebuild would
+# have silently dropped to Proxmox's kvm64 default. Same trap that bit VM-130.
+vm_cpu_type: host

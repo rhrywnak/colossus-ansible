@@ -25,7 +25,21 @@ vm_cores: 2
 vm_memory: 2048
 vm_disk_size: 20G
 vm_machine: q35
-vm_cpu_type: host
+
+# Guest CPU model.
+#
+# ⚠️ DRIFT (recorded 2026-08-16): this line said `host` and had NO EFFECT —
+# roles/proxmox-vm had no --cpu handling at all until now, so VM-316 was created
+# with Proxmox's kvm64 default. The file has been asserting something untrue.
+# The RUNNING VM is still kvm64 and is deliberately left alone: changing CPU type
+# needs a full stop/start, and Authentik is what every other service
+# authenticates against. This takes effect on the next rebuild.
+#
+# Changed host -> x86-64-v2-AES at the same time. Authentik needs no
+# host-specific features, and `host` would pin it to pve-3 — removing the option
+# of starting the auth dependency on another node during a recovery, which is
+# exactly when that option is worth having.
+vm_cpu_type: x86-64-v2-AES
 
 # ── Network ─────────────────────────────────────────────────
 vm_ip: 10.10.100.58

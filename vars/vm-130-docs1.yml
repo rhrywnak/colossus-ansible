@@ -30,4 +30,16 @@ vm_disk_grow: "+30G"
 vm_storage: local-lvm
 vm_cpuunits: 50
 
+# Guest CPU model. MUST be v2-or-better: the Paperless image's NumPy requires
+# x86-64-v2, and on Proxmox's kvm64 default it dies at import with an illegal
+# instruction — which surfaced as random ingest failures, not as a CPU fault.
+#
+# `host` matches what VM-130 is running now (applied by hand 2026-08-15), so a
+# rebuild reproduces the proven-good state exactly rather than substituting an
+# untested model. The cost is that docs1 can only start on pve-1 — acceptable,
+# because both TrueNAS NFS exports (13 and 14) are pinned to this VM's IP and it
+# has no migration story. x86-64-v2-AES would also satisfy NumPy and would keep
+# the VM portable, if that ever matters more than matching what is running.
+vm_cpu_type: host
+
 vm_virtiofs_shares: []
