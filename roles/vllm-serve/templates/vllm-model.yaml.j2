@@ -5,7 +5,12 @@
 # Keys are long CLI flags without the leading '--' (dashes, not underscores).
 model: {{ item.model_repo }}
 revision: "{{ item.revision }}"
+{% if item.quantization is defined %}
 quantization: {{ item.quantization }}
+{% endif %}
+{% if item.task is defined %}
+task: {{ item.task }}
+{% endif %}
 tensor-parallel-size: {{ item.tensor_parallel }}
 max-model-len: {{ item.max_model_len }}
 max-num-seqs: {{ item.max_num_seqs }}

@@ -63,6 +63,17 @@ vllm_models:
     max_model_len: 8192
     max_num_seqs: 2
     gpu_memory_utilization: 0.90
+  # Cross-encoder re-ranker for colossus-legal (VLLM_MODEL_LIFECYCLE_REQUIREMENTS_v2 N1).
+  # task=score -> /score and /rerank endpoints, not chat. No quantization (fp16,
+  # ~1.5 GB). TP=1 -> 1gpu layout. Serves in place of qwen14b-awq on GPU 0.
+  - name: bge-reranker-v2-m3
+    model_repo: "BAAI/bge-reranker-v2-m3"
+    revision: "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+    task: score
+    tensor_parallel: 1
+    max_model_len: 8192
+    max_num_seqs: 64
+    gpu_memory_utilization: 0.50
 
 # Which model config seeds each fixed layout path on first deploy (seed only —
 # force:false/creates-guard never clobbers the operator's live choice on redeploy).
