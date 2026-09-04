@@ -31,6 +31,7 @@ surya_ocr_host: "0.0.0.0"
 vllm_firewall_source_subnets:
   - "10.10.100.0/24"
   - "10.10.0.0/24"
+  - "10.10.10.0/24"   # Roman's Mac (10.10.10.60) — G1 gate runs from Claude Code there (REQUIREMENTS_v2 N4, amended 2026-09-03)
 # Ports opened to those subnets. WebUI port included only when enabled.
 vllm_firewall_ports:
   - "{{ vllm_port }}"                # 8001 vLLM (both layout units; one runs at a time)
