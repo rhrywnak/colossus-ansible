@@ -1,0 +1,19 @@
+---
+# playbooks/prod-sync-vault-check.yml
+# PROD sync row 0.10: report which PROD vault keys exist and whether the
+# PROD store passwords equal the DEV ones. Prints ONLY true/false — never a value.
+# Semaphore template: "PROD Sync - Vault Check"
+- name: "PROD sync — vault key check"
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../inventory/group_vars/all/vault.yml
+  tasks:
+    - name: "Vault key presence and equality (true/false only)"
+      ansible.builtin.debug:
+        msg:
+          - "vault_colossus_legal_pg_password_prod present: {{ vault_colossus_legal_pg_password_prod is defined }}"
+          - "vault_colossus_legal_neo4j_password_prod present: {{ vault_colossus_legal_neo4j_password_prod is defined }}"
+          - "vault_colossus_legal_anthropic_api_key present: {{ vault_colossus_legal_anthropic_api_key is defined }}"
+          - "postgres password prod == dev: {{ (vault_colossus_legal_pg_password_prod | default('__A__')) == (vault_colossus_legal_pg_password_dev | default('__B__')) }}"
+          - "neo4j password prod == dev: {{ (vault_colossus_legal_neo4j_password_prod | default('__A__')) == (vault_colossus_legal_neo4j_password_dev | default('__B__')) }}"
