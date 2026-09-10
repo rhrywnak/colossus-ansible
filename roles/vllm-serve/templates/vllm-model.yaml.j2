@@ -3,13 +3,11 @@
 # Rendered to /models/configs/{{ item.name }}.yaml. To make it active, cp it onto
 # the fixed layout path (/models/configs/<layout>.yaml) + restart that unit.
 # Keys are long CLI flags without the leading '--' (dashes, not underscores).
+# `extra:` (optional dict) is rendered verbatim as further key: value lines.
 model: {{ item.model_repo }}
 revision: "{{ item.revision }}"
 {% if item.quantization is defined %}
 quantization: {{ item.quantization }}
-{% endif %}
-{% if item.task is defined %}
-task: {{ item.task }}
 {% endif %}
 tensor-parallel-size: {{ item.tensor_parallel }}
 max-model-len: {{ item.max_model_len }}
@@ -17,3 +15,6 @@ max-num-seqs: {{ item.max_num_seqs }}
 gpu-memory-utilization: {{ item.gpu_memory_utilization }}
 port: {{ vllm_port }}
 download-dir: /models
+{% for k, v in (item.extra | default({})).items() %}
+{{ k }}: {{ v | tojson }}
+{% endfor %}

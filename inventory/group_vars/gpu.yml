@@ -64,16 +64,32 @@ vllm_models:
     max_num_seqs: 2
     gpu_memory_utilization: 0.90
   # Cross-encoder re-ranker for colossus-legal (VLLM_MODEL_LIFECYCLE_REQUIREMENTS_v2 N1).
-  # task=score -> /score and /rerank endpoints, not chat. No quantization (fp16,
+  # Pooling model, auto-detected (vLLM >=0.21 removed --task) -> /score and /rerank. No quantization (fp16,
   # ~1.5 GB). TP=1 -> 1gpu layout. Serves in place of qwen14b-awq on GPU 0.
   - name: bge-reranker-v2-m3
     model_repo: "BAAI/bge-reranker-v2-m3"
     revision: "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
-    task: score
     tensor_parallel: 1
     max_model_len: 8192
     max_num_seqs: 64
     gpu_memory_utilization: 0.50
+  # Qwen3.8-27B, NVFP4 (unsloth), for the judge-vs-Opus test. Dense hybrid (Gated
+  # DeltaNet + attention), VLM. Weights are 22.6 GB on disk (only FFN is 4-bit) ->
+  # ~11.3 GB per card at TP=2 on 2x16 GB; that leaves ~3.5 GB/card, so first run is
+  # 32k context + enforce-eager (no CUDA-graph memory). Tune up after it serves.
+  # quantization is auto-detected (compressed-tensors) — do not set it.
+  # Requires the big-model profile (both GPUs; Surya and the 1gpu unit stopped).
+  - name: qwen38-27b-nvfp4
+    model_repo: "unsloth/Qwen3.8-27B-NVFP4"
+    revision: "f0b7c9e722f5565102fff8481c99e4d86ae099c7"
+    tensor_parallel: 2
+    max_model_len: 32768
+    max_num_seqs: 2
+    gpu_memory_utilization: 0.92
+    extra:
+      kv-cache-dtype: fp8
+      reasoning-parser: qwen3
+      enforce-eager: true
 
 # Which model config seeds each fixed layout path on first deploy (seed only —
 # force:false/creates-guard never clobbers the operator's live choice on redeploy).
