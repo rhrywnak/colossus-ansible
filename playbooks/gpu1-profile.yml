@@ -96,10 +96,14 @@
       failed_when: false
 
     # ── Start units in the profile ──
-    - name: "Start units in profile (restart the vLLM unit if its model config changed)"
+    # When gpu_model is given, the vLLM unit is ALWAYS restarted: selecting a model
+    # means "load it now on the current unit definition" (image/entrypoint changes
+    # from deploy-gpu1 are picked up here too). Without gpu_model, units are only
+    # started if not running.
+    - name: "Start units in profile (restart the vLLM unit when a model was selected)"
       ansible.builtin.systemd:
         name: "{{ item }}.service"
-        state: "{{ 'restarted' if (item == _vllm_unit and (_model_cp is defined) and (_model_cp is changed)) else 'started' }}"
+        state: "{{ 'restarted' if (item == _vllm_unit and gpu_model is defined) else 'started' }}"
       loop: "{{ _up_units }}"
       register: _start_result
       failed_when: false
