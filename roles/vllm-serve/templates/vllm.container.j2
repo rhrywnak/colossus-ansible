@@ -16,13 +16,13 @@ Network=host
 {% for g in item.gpus.split(',') %}
 AddDevice=nvidia.com/gpu={{ g }}
 {% endfor %}
-PodmanArgs=--shm-size=8g
+# --entrypoint via PodmanArgs: Quadlet's Entrypoint= key needs Podman >=5; this host is 4.9.
+PodmanArgs=--shm-size=8g --entrypoint vllm
 EnvironmentFile={{ vllm_env_dir }}/vllm-{{ item.name }}.env
 Environment=HF_HOME=/models
 Volume={{ vllm_models_dir }}:/models:rw
-# Upstream image ENTRYPOINT is the API server itself; pin the entrypoint so Exec is
-# the subcommand only (works for NGC and upstream images alike).
-Entrypoint=vllm
+# Upstream image ENTRYPOINT is the API server itself; entrypoint is pinned above so
+# Exec is the subcommand only (works for NGC and upstream images alike).
 Exec=serve --config /models/configs/{{ item.name }}.yaml
 
 [Service]
