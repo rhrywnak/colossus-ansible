@@ -90,6 +90,26 @@ vllm_models:
       kv-cache-dtype: fp8
       reasoning-parser: qwen3
       enforce-eager: true
+      # Thinking OFF by default. Qwen3 reasons unless told not to, and the scan
+      # judge does not read the reasoning: measured 2026-09-10 on S-13, ~985
+      # generated tokens per verdict against a ~95-token reply the app keeps —
+      # ~90% generated and discarded, 85 s a card
+      # (CC_REPORT_QWEN_SCAN_DIAG_v1.md). `reasoning-parser: qwen3` above is what
+      # routes the thinking to `reasoning_content`, so it never even reached the
+      # caller; this stops it being produced.
+      #
+      # A DEFAULT, not a ban: vLLM merges request-level `chat_template_kwargs`
+      # over this one, request winning (cli_args.py:95-96 in the pinned image), so
+      # anything that wants reasoning asks for it per call.
+      #
+      # A nested dict on purpose. vLLM's config loader json.dumps a dict value
+      # into the argv string its `json.loads` argparse type expects
+      # (utils/argparse_utils.py:601-605 and entrypoints/launchers/cli_args.py:208),
+      # which is exactly the documented `--default-chat-template-kwargs
+      # '{"enable_thinking": false}'` form. A pre-quoted string would also work;
+      # the dict keeps the rendered YAML free of escaped quotes.
+      default-chat-template-kwargs:
+        enable_thinking: false
 
 # Which model config seeds each fixed layout path on first deploy (seed only —
 # force:false/creates-guard never clobbers the operator's live choice on redeploy).
